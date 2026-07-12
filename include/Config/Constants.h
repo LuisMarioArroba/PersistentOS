@@ -1,0 +1,7 @@
+#ifndef CONSTANTS_H
+#define CONSTANTS_H
+
+#define MAGIC_NUMBER 0xDEADBEEF
+#define MAX_TASKS 10
+#define SYSTEM_VERSION 1
+#endif
