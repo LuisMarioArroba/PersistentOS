@@ -2,24 +2,35 @@
 #define TASK_H
 
 #include <Arduino.h>
+
 typedef void (*TaskFunction)();
 
 enum TaskState
 {
-    READY = 0,
-    RUNNING = 1,
-    WAITING = 2,
-    SUSPENDED = 3
+    READY,
+    RUNNING,
+    WAITING,
+    SUSPENDED
 };
 
 struct Task
 {
+    // Identificación
     const char* name;
+
+    // Función asociada
     TaskFunction run;
+
+    // Estado actual
     TaskState state;
+
+    // Configuración temporal
     uint32_t period;
+
+    // Tiempo de la última ejecución
     uint32_t lastExecution;
-    uint8_t id;
+
+    // Estadísticas
     uint32_t executions;
 };
 

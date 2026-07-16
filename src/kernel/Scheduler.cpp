@@ -1,39 +1,68 @@
 #include "kernel/Scheduler.h"
+#include "kernel/TaskManager.h"
 
-Scheduler::Scheduler(){
-    count = 0;
+Scheduler::Scheduler()
+{
+    taskManager = nullptr;
     persistentState = nullptr;
 }
 
-void Scheduler::addTask(Task* task){
-    tasks[count++] = task;
+void Scheduler::attachTaskManager(
+    TaskManager* manager
+)
+{
+    taskManager = manager;
 }
 
-void Scheduler::attachState(PersistentState* state){
+void Scheduler::attachState(
+    PersistentState* state
+)
+{
     persistentState = state;
 }
 
-void Scheduler::execute(){
-    for(int i=0;i<count;i++){
-        Task* task = tasks[i];
-        if(task->state != READY){
+void Scheduler::execute()
+{
+    if(taskManager == nullptr)
+    {
+        return;
+    }
+
+    for(uint8_t i = 0;
+        i < taskManager->getTaskCount();
+        i++)
+    {
+        Task* task = taskManager->getTask(i);
+
+        if(task == nullptr)
+        {
             continue;
         }
-        if((systemTick - task->lastExecution)>= task->period){
-            task->state = RUNNING;
-            task->run();
-            task->lastExecution = systemTick;
-            task->executions++;
-            if(persistentState != nullptr){
-                persistentState->tasks[i] = { static_cast<unsigned char> (i), static_cast<unsigned char> (task->state), task->lastExecution, task->executions };
-                /*
-                persistentState->tasks[i].id = i;
-                persistentState->tasks[i].state = task->state;
-                persistentState->tasks[i].lastExecution = task->lastExecution;
-                persistentState->tasks[i].executions = task->executions;
-                */
-            }
-            task->state = READY;
+
+        if(task->state != READY)
+        {
+            continue;
         }
+
+        if((systemTick - task->lastExecution)
+            < task->period)
+        {
+            continue;
+        }
+
+        task->state = RUNNING;
+
+        task->run();
+
+        task->lastExecution = systemTick;
+
+        task->executions++;
+
+        if(persistentState != nullptr)
+        {
+            persistentState->tasks[i] = { static_cast<unsigned char> (i), static_cast<unsigned char> (task->state), task->lastExecution, task->executions };
+        }
+
+        task->state = READY;
     }
 }

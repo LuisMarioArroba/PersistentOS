@@ -1,27 +1,25 @@
 #ifndef SCHEDULER_H
 #define SCHEDULER_H
 
-#include "Task.h"
-#include "PersistentState.h"
-#include "Config/Constants.h"
+#include <Arduino.h>
+
+#include "kernel/Task.h"
+#include "kernel/TaskManager.h"
+#include "kernel/PersistentState.h"
+#include "config/Constants.h"
 
 extern uint32_t systemTick;
 
 class Scheduler
 {
 private:
-    Task* tasks[MAX_TASKS];
-    int count;
+    TaskManager* taskManager;
     PersistentState* persistentState;
 
 public:
     Scheduler();
-    void addTask(Task* task);
-    void attachState(
-        PersistentState* state
-    );
+    void attachTaskManager(TaskManager* manager);
+    void attachState(PersistentState* state);
     void execute();
 };
-
-
 #endif
