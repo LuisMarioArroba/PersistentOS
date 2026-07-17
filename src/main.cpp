@@ -2,6 +2,7 @@
 
 #include "config/Config.h"
 
+
 //====================================================
 // Kernel
 //====================================================
@@ -13,17 +14,28 @@
 #include "kernel/FRAMManager.h"
 #include "kernel/BootManager.h"
 
+
+//====================================================
+// Services
+//====================================================
+
+#include "services/SensorService.h"
+#include "services/SensorBuffer.h"
+
+
 //====================================================
 // Hardware
 //====================================================
 
 #include "hardware/Sensors.h"
 
+
 //====================================================
 // System Tick
 //====================================================
 
 uint32_t systemTick = 0;
+
 
 //====================================================
 // Kernel Objects
@@ -37,11 +49,22 @@ FRAMManager fram;
 
 BootManager bootManager(fram);
 
+
 //====================================================
 // Hardware
 //====================================================
 
 Sensor sensorManager;
+
+
+//====================================================
+// Services
+//====================================================
+
+SensorBuffer sensorBuffer;
+
+SensorService sensorService;
+
 
 //====================================================
 // Tasks
@@ -49,33 +72,44 @@ Sensor sensorManager;
 
 void sensorTask()
 {
-    if(sensorManager.update())
-    {
-        Serial.print("[Sensor] ");
-
-        Serial.println(sensorManager.getValue());
-    }
+    sensorService.execute();
 }
+
+
 
 void communicationTask()
 {
     Serial.print("[Communication] Sending: ");
 
-    Serial.println(sensorManager.getValue());
+    Serial.println(
+        sensorService.getLastValue()
+    );
 }
+
+
 
 void ledTask()
 {
     static bool ledState = false;
 
+
     ledState = !ledState;
 
-    digitalWrite(LED_PIN, ledState);
 
+    digitalWrite(
+        LED_PIN,
+        ledState
+    );
+
+/*
     Serial.print("[LED] ");
 
-    Serial.println(ledState ? "ON" : "OFF");
+    Serial.println(
+        ledState ? "ON" : "OFF"
+    );
+    */
 }
+
 
 //====================================================
 // Task Registration
@@ -91,6 +125,8 @@ Task sensor =
     0
 };
 
+
+
 Task communication =
 {
     "Communication",
@@ -100,6 +136,8 @@ Task communication =
     0,
     0
 };
+
+
 
 Task led =
 {
@@ -111,31 +149,55 @@ Task led =
     0
 };
 
+
 //====================================================
 // Setup
 //====================================================
 
 void setup()
 {
+
     Serial.begin(115200);
 
-    pinMode(LED_PIN, OUTPUT);
+
+    pinMode(
+        LED_PIN,
+        OUTPUT
+    );
+
 
     //------------------------------------------------
-    // Boot Manager
+    // Boot
     //------------------------------------------------
 
     bootManager.begin();
 
+
+
     //------------------------------------------------
-    // Scheduler Configuration
+    // Persistent Buffer
     //------------------------------------------------
 
-    scheduler.attachTaskManager(&taskManager);
+    sensorBuffer.attach(
+        &bootManager.getState().sensorBuffer
+    );
+
+
+
+    //------------------------------------------------
+    // Scheduler
+    //------------------------------------------------
+
+    scheduler.attachTaskManager(
+        &taskManager
+    );
+
 
     scheduler.attachState(
         &bootManager.getState()
     );
+
+
 
     //------------------------------------------------
     // Boot Information
@@ -143,42 +205,86 @@ void setup()
 
     if(bootManager.wasRecovery())
     {
-        Serial.println("[BOOT] Recovery Mode");
+
+        Serial.println(
+            "[BOOT] Recovery Mode"
+        );
+
     }
     else
     {
-        Serial.println("[BOOT] Normal Startup");
+
+        Serial.println(
+            "[BOOT] Normal Startup"
+        );
+
     }
 
+
+
     //------------------------------------------------
-    // Sensors
+    // Hardware
     //------------------------------------------------
 
     if(sensorManager.begin())
     {
-        Serial.println("[Sensor] OK");
+
+        Serial.println(
+            "[Sensor] OK"
+        );
+
     }
     else
     {
-        Serial.println("[Sensor] NOT FOUND");
+
+        Serial.println(
+            "[Sensor] NOT FOUND"
+        );
+
     }
 
-    //------------------------------------------------
-    // Register Tasks
-    //------------------------------------------------
 
-    taskManager.addTask(&sensor);
-
-    taskManager.addTask(&communication);
-
-    taskManager.addTask(&led);
 
     //------------------------------------------------
+    // Services
+    //------------------------------------------------
+
+    sensorService.begin(
+        &sensorManager,
+        &sensorBuffer
+    );
+
+
+
+    //------------------------------------------------
+    // Tasks
+    //------------------------------------------------
+
+    taskManager.addTask(
+        &sensor
+    );
+
+
+    taskManager.addTask(
+        &communication
+    );
+
+
+    taskManager.addTask(
+        &led
+    );
+
+
 
     Serial.println();
 
-    Serial.println("===== PersistentOS Started =====");
+
+    Serial.println(
+        "===== PersistentOS Started ====="
+    );
+
 }
+
 
 //====================================================
 // Loop
@@ -186,16 +292,30 @@ void setup()
 
 void loop()
 {
+
     systemTick++;
 
-    scheduler.execute();
 
     PersistentState& state =
         bootManager.getState();
 
-    state.kernel.systemTick = systemTick;
+
+    state.kernel.systemTick =
+        systemTick;
+
+
+    scheduler.execute();
+
 
     fram.save(state);
 
+
+    if(systemTick % 100 == 0)
+    {
+        sensorService.printBufferStatus();
+    }
+
+
     delay(SYSTEM_TICK_MS);
+
 }

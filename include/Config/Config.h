@@ -12,4 +12,11 @@ Scheduler Configuration
 */
 #define MAX_TASKS           10
 #define SYSTEM_TICK_MS      100
+
+/*
+Persistent Memory Configuration
+*/
+
+#define SENSOR_BUFFER_SIZE      32
+#define ENERGY_HISTORY_SIZE     50
 #endif

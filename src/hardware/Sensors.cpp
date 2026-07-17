@@ -26,7 +26,12 @@ bool Sensor::update(){
     if(!connected)
         return false;
     sensors.requestTemperatures();
-    currentValue = sensors.getTempCByIndex(0);
+    float value = sensors.getTempCByIndex(0);
+    if(value == DEVICE_DISCONNECTED_C){
+        connected = false;
+        return false;
+    }
+    currentValue = value;
     return true;
 }
 float Sensor::getValue() const{

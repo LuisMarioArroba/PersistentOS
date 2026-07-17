@@ -13,7 +13,7 @@ FRAMManager::FRAMManager(){
 
 bool FRAMManager::begin(){
     initialized = true;
-    Serial.println("[FRAM] Initialized");
+    //Serial.println("[FRAM] Initialized");
     return true;
 }
 
@@ -24,7 +24,7 @@ bool FRAMManager::save(const PersistentState& state){
 
     memcpy(&persistentMemory,&state,sizeof(PersistentState));
     memoryAvailable = true;
-    Serial.println("[FRAM] State saved");
+    //Serial.println("[FRAM] State saved");
     return true;
 }
 
@@ -33,11 +33,11 @@ bool FRAMManager::load(PersistentState& state){
         return false;
     }
     if(!memoryAvailable){
-        Serial.println("[FRAM] No previous state");
+        //Serial.println("[FRAM] No previous state");
         return false;
     }
     memcpy(&state,&persistentMemory,sizeof(PersistentState));
-    Serial.println("[FRAM] State restored");
+    //Serial.println("[FRAM] State restored");
     return true;
 }
 
@@ -47,7 +47,7 @@ bool FRAMManager::clear(){
     }
     memset(&persistentMemory,0,sizeof(PersistentState));
     memoryAvailable = false;
-    Serial.println("[FRAM] Memory cleared");
+    //Serial.println("[FRAM] Memory cleared");
     return true;
 }
 

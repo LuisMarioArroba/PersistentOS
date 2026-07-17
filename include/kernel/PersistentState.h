@@ -1,9 +1,8 @@
 #ifndef PERSISTENT_STATE_H
 #define PERSISTENT_STATE_H
-#define SENSOR_BUFFER_SIZE 32
-#define ENERGY_HISTORY_SIZE 50
 #include <Arduino.h>
 #include "Config/Constants.h"
+#include "Config/Config.h"
 
 /*
 Kernel persistent information
