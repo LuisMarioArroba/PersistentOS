@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include "Config/Constants.h"
 #include "Config/Config.h"
+#include "kernel/TaskID.h"
 
 /*
 Kernel persistent information
@@ -24,10 +25,13 @@ struct PersistentKernelState{
 };
 
 struct PersistentTaskState{
-    uint8_t id;
+    TaskID id;
     uint8_t state;
     uint32_t lastExecution;
     uint32_t executions;
+    uint8_t checkpoint;
+    uint8_t progress;
+    bool completed;
 };
 
 struct SensorSample{

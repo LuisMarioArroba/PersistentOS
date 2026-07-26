@@ -1,10 +1,12 @@
 #include "kernel/Scheduler.h"
 #include "kernel/TaskManager.h"
+#include "kernel/ExecutionSteps.h"
 
 Scheduler::Scheduler()
 {
     taskManager = nullptr;
     persistentState = nullptr;
+    checkpointManager = nullptr;
 }
 
 void Scheduler::attachTaskManager(
@@ -19,6 +21,12 @@ void Scheduler::attachState(
 )
 {
     persistentState = state;
+}
+
+void Scheduler::attachCheckpoint(
+    ExecutionCheckpoint* checkpoint
+){
+    checkpointManager = checkpoint;
 }
 
 void Scheduler::execute()
@@ -52,6 +60,15 @@ void Scheduler::execute()
 
         task->state = RUNNING;
 
+        if(checkpointManager != nullptr)
+        {
+            checkpointManager->update(
+                task->id,
+                STEP_IDLE,
+                0
+            );
+        }
+
         task->run();
 
         task->lastExecution = systemTick;
@@ -60,7 +77,17 @@ void Scheduler::execute()
 
         if(persistentState != nullptr)
         {
-            persistentState->tasks[i] = { static_cast<unsigned char> (i), static_cast<unsigned char> (task->state), task->lastExecution, task->executions };
+            persistentState->tasks[task->id].id =
+                task->id;
+
+            persistentState->tasks[task->id].state =
+                task->state;
+
+            persistentState->tasks[task->id].lastExecution =
+                task->lastExecution;
+
+            persistentState->tasks[task->id].executions =
+                task->executions;
         }
 
         task->state = READY;

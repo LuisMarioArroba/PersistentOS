@@ -13,6 +13,8 @@
 #include "kernel/PersistentState.h"
 #include "kernel/FRAMManager.h"
 #include "kernel/BootManager.h"
+#include "kernel/ExecutionCheckpoint.h"
+#include "kernel/ResumeManager.h"
 
 
 //====================================================
@@ -37,6 +39,7 @@
 uint32_t systemTick = 0;
 
 
+
 //====================================================
 // Kernel Objects
 //====================================================
@@ -50,11 +53,19 @@ FRAMManager fram;
 BootManager bootManager(fram);
 
 
+ExecutionCheckpoint checkpointManager;
+
+
+ResumeManager resumeManager;
+
+
+
 //====================================================
 // Hardware
 //====================================================
 
 Sensor sensorManager;
+
 
 
 //====================================================
@@ -64,6 +75,7 @@ Sensor sensorManager;
 SensorBuffer sensorBuffer;
 
 SensorService sensorService;
+
 
 
 //====================================================
@@ -90,6 +102,7 @@ void communicationTask()
 
 void ledTask()
 {
+
     static bool ledState = false;
 
 
@@ -101,14 +114,8 @@ void ledTask()
         ledState
     );
 
-/*
-    Serial.print("[LED] ");
-
-    Serial.println(
-        ledState ? "ON" : "OFF"
-    );
-    */
 }
+
 
 
 //====================================================
@@ -117,6 +124,7 @@ void ledTask()
 
 Task sensor =
 {
+    TASK_SENSOR,
     "Sensor",
     sensorTask,
     READY,
@@ -129,6 +137,7 @@ Task sensor =
 
 Task communication =
 {
+    TASK_COMMUNICATION,
     "Communication",
     communicationTask,
     READY,
@@ -141,6 +150,7 @@ Task communication =
 
 Task led =
 {
+    TASK_LED,
     "LED",
     ledTask,
     READY,
@@ -148,6 +158,8 @@ Task led =
     0,
     0
 };
+
+
 
 
 //====================================================
@@ -160,10 +172,12 @@ void setup()
     Serial.begin(115200);
 
 
+
     pinMode(
         LED_PIN,
         OUTPUT
     );
+
 
 
     //------------------------------------------------
@@ -185,6 +199,27 @@ void setup()
 
 
     //------------------------------------------------
+    // Checkpoint System
+    //------------------------------------------------
+
+    checkpointManager.attachState(
+        &bootManager.getState()
+    );
+
+
+
+    //------------------------------------------------
+    // Resume System
+    //------------------------------------------------
+
+    resumeManager.begin(
+        &bootManager.getState(),
+        bootManager.wasRecovery()
+    );
+
+
+
+    //------------------------------------------------
     // Scheduler
     //------------------------------------------------
 
@@ -195,6 +230,11 @@ void setup()
 
     scheduler.attachState(
         &bootManager.getState()
+    );
+
+
+    scheduler.attachCheckpoint(
+        &checkpointManager
     );
 
 
@@ -251,7 +291,9 @@ void setup()
 
     sensorService.begin(
         &sensorManager,
-        &sensorBuffer
+        &sensorBuffer,
+        &resumeManager,
+        &checkpointManager
     );
 
 
@@ -278,12 +320,12 @@ void setup()
 
     Serial.println();
 
-
     Serial.println(
         "===== PersistentOS Started ====="
     );
 
 }
+
 
 
 //====================================================
@@ -296,26 +338,38 @@ void loop()
     systemTick++;
 
 
+
     PersistentState& state =
         bootManager.getState();
+
 
 
     state.kernel.systemTick =
         systemTick;
 
 
+
     scheduler.execute();
 
 
-    fram.save(state);
+
+    fram.save(
+        state
+    );
+
 
 
     if(systemTick % 100 == 0)
     {
+
         sensorService.printBufferStatus();
+
     }
 
 
-    delay(SYSTEM_TICK_MS);
+
+    delay(
+        SYSTEM_TICK_MS
+    );
 
 }

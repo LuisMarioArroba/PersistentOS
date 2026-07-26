@@ -2,6 +2,7 @@
 #define TASK_H
 
 #include <Arduino.h>
+#include "kernel/TaskID.h"
 
 typedef void (*TaskFunction)();
 
@@ -15,6 +16,7 @@ enum TaskState
 
 struct Task
 {
+    TaskID id;
     // Identificación
     const char* name;
 

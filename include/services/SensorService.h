@@ -4,11 +4,18 @@
 
 #include <Arduino.h>
 
+
+#include "services/ResumableService.h"
+
 #include "hardware/Sensors.h"
+
+#include "kernel/ExecutionSteps.h"
+
 #include "services/SensorBuffer.h"
 
 
-class SensorService
+
+class SensorService : public ResumableService
 {
 
 private:
@@ -20,27 +27,48 @@ private:
     float simulatedValue;
 
 
+
+private:
+
+    void saveBuffer(
+        float value
+    );
+
+
+
 public:
 
     SensorService();
 
 
+
     void begin(
         Sensor* sensorPtr,
-        SensorBuffer* bufferPtr
+        SensorBuffer* bufferPtr,
+        ResumeManager* resumePtr,
+        ExecutionCheckpoint* checkpointPtr
     );
 
-
-    void execute();
 
 
     void executeSimulation();
 
 
+
     float getLastValue() const;
 
 
+
     void printBufferStatus();
+
+
+
+protected:
+
+    void executeNormal() override;
+
+
+    void executeResume() override;
 
 };
 

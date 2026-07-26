@@ -17,7 +17,9 @@ SensorService::SensorService()
 
 void SensorService::begin(
     Sensor* sensorPtr,
-    SensorBuffer* bufferPtr
+    SensorBuffer* bufferPtr,
+    ResumeManager* resumePtr,
+    ExecutionCheckpoint* checkpointPtr
 )
 {
 
@@ -25,11 +27,23 @@ void SensorService::begin(
 
     buffer = bufferPtr;
 
+
+    ResumableService::begin(
+        resumePtr,
+        checkpointPtr,
+        TASK_SENSOR
+    );
+
 }
 
 
 
-void SensorService::execute()
+
+//====================================================
+// Normal execution
+//====================================================
+
+void SensorService::executeNormal()
 {
 
     if(sensor == nullptr)
@@ -38,30 +52,258 @@ void SensorService::execute()
     }
 
 
-    if(sensor->update())
+
+    //--------------------------------------------------
+    // STEP 1
+    // Sensor Read
+    //--------------------------------------------------
+
+    updateCheckpoint(
+        STEP_SENSOR_READ,
+        25
+    );
+
+
+
+    if(!sensor->update())
+    {
+        return;
+    }
+
+
+
+    //--------------------------------------------------
+    // STEP 2
+    // Process Data
+    //--------------------------------------------------
+
+    updateCheckpoint(
+        STEP_SENSOR_PROCESS,
+        50
+    );
+
+
+
+    float value =
+        sensor->getValue();
+
+
+
+
+    //--------------------------------------------------
+    // STEP 3
+    // Store Buffer
+    //--------------------------------------------------
+
+    saveBuffer(
+        value
+    );
+
+
+
+
+    Serial.print("[Sensor] ");
+
+    Serial.println(value);
+
+
+
+
+    //--------------------------------------------------
+    // FINISH
+    //--------------------------------------------------
+
+    finishExecution();
+
+}
+
+
+
+
+
+//====================================================
+// Resume execution
+//====================================================
+
+void SensorService::executeResume()
+{
+
+    if(sensor == nullptr)
+    {
+        return;
+    }
+
+
+
+    uint8_t checkpoint =
+        getCheckpoint();
+
+
+
+    Serial.print(
+        "[Sensor Resume] Checkpoint: "
+    );
+
+    Serial.println(checkpoint);
+
+
+
+    switch(checkpoint)
     {
 
-        float value =
-            sensor->getValue();
 
 
-        if(buffer != nullptr)
+        //--------------------------------------------------
+        // Se cortó leyendo sensor
+        //--------------------------------------------------
+
+        case STEP_SENSOR_READ:
         {
 
-            buffer->push(
-                value,
-                millis()
+            updateCheckpoint(
+                STEP_SENSOR_READ,
+                25
             );
+
+
+            if(!sensor->update())
+            {
+                return;
+            }
+
 
         }
 
 
-        Serial.print(
-            "[SensorService] "
+
+        //--------------------------------------------------
+        // Se cortó procesando
+        //--------------------------------------------------
+
+        case STEP_SENSOR_PROCESS:
+        {
+
+            updateCheckpoint(
+                STEP_SENSOR_PROCESS,
+                50
+            );
+
+
+            if(!sensor->update())
+            {
+                return;
+            }
+
+
+            float value =
+                sensor->getValue();
+
+
+
+            saveBuffer(
+                value
+            );
+
+
+
+            Serial.print(
+                "[Resume Sensor] "
+            );
+
+
+            Serial.println(value);
+
+
+
+            break;
+
+        }
+
+
+
+        //--------------------------------------------------
+        // Se cortó guardando buffer
+        //--------------------------------------------------
+
+        case STEP_SENSOR_BUFFER:
+        {
+
+            updateCheckpoint(
+                STEP_SENSOR_BUFFER,
+                75
+            );
+
+
+            if(!sensor->update())
+            {
+                return;
+            }
+
+
+            float value =
+                sensor->getValue();
+
+
+
+            saveBuffer(
+                value
+            );
+
+
+            break;
+
+        }
+
+
+
+        default:
+        {
+
+            Serial.println(
+                "[Sensor Resume] Invalid checkpoint"
+            );
+
+
+            return;
+
+        }
+
+    }
+
+
+
+    finishExecution();
+
+}
+
+
+
+
+
+
+//====================================================
+// Buffer
+//====================================================
+
+void SensorService::saveBuffer(
+    float value
+)
+{
+
+    updateCheckpoint(
+        STEP_SENSOR_BUFFER,
+        75
+    );
+
+
+
+    if(buffer != nullptr)
+    {
+
+        buffer->push(
+            value,
+            millis()
         );
-
-
-        Serial.println(value);
 
     }
 
@@ -69,27 +311,31 @@ void SensorService::execute()
 
 
 
+
+
+
+//====================================================
+// Simulation
+//====================================================
+
 void SensorService::executeSimulation()
 {
 
     simulatedValue += 0.25;
 
 
-    if(simulatedValue > 30)
+
+    if(simulatedValue > 30.0)
     {
         simulatedValue = 25.0;
     }
 
 
-    if(buffer != nullptr)
-    {
 
-        buffer->push(
-            simulatedValue,
-            millis()
-        );
+    saveBuffer(
+        simulatedValue
+    );
 
-    }
 
 
     Serial.print(
@@ -101,22 +347,31 @@ void SensorService::executeSimulation()
         simulatedValue
     );
 
+
+
+    finishExecution();
+
 }
+
+
+
 
 
 
 float SensorService::getLastValue() const
 {
 
-    if(sensor != nullptr)
+    if(sensor == nullptr)
     {
-        return sensor->getValue();
+        return 0.0;
     }
 
 
-    return simulatedValue;
+    return sensor->getValue();
 
 }
+
+
 
 
 
@@ -125,22 +380,30 @@ void SensorService::printBufferStatus()
 
     if(buffer == nullptr)
     {
+
         Serial.println(
             "[Buffer] NOT ATTACHED"
         );
 
+
         return;
+
     }
 
 
+
+    Serial.println();
+
     Serial.println(
-        "===== Sensor Buffer ====="
+        "========== Sensor Buffer =========="
     );
+
 
 
     Serial.print(
-        "Samples: "
+        "Samples Stored : "
     );
+
 
 
     Serial.println(
@@ -148,8 +411,9 @@ void SensorService::printBufferStatus()
     );
 
 
+
     Serial.println(
-        "========================="
+        "==================================="
     );
 
 }
