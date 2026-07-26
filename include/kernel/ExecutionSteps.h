@@ -1,23 +1,31 @@
 #ifndef EXECUTION_STEPS_H
 #define EXECUTION_STEPS_H
 
+
 enum ExecutionStep
 {
+
     STEP_IDLE = 0,
 
+
+    // Sensor
     STEP_SENSOR_READ,
 
     STEP_SENSOR_PROCESS,
 
     STEP_SENSOR_BUFFER,
 
-    STEP_SENSOR_COMPLETE,
 
+    // Communication
     STEP_COMMUNICATION_PREPARE,
 
     STEP_COMMUNICATION_SEND,
 
-    STEP_COMMUNICATION_COMPLETE
+
+    // Generic finish
+    STEP_COMPLETE
+
 };
+
 
 #endif

@@ -1,4 +1,6 @@
 #include "kernel/BootManager.h"
+#include "kernel/ExecutionSteps.h"
+
 
 
 BootManager::BootManager(
@@ -14,6 +16,7 @@ framManager(fram)
 
 
 
+
 bool BootManager::begin()
 {
 
@@ -22,7 +25,27 @@ bool BootManager::begin()
         return false;
     }
 
+    if(!framManager.isAvailable())
+    {
+        Serial.println(
+            "[BOOT] FRAM not detected"
+        );
 
+        Serial.println(
+            "[BOOT] Running volatile mode"
+        );
+    }
+    else
+    {
+        Serial.println(
+            "[BOOT] Persistent memory available"
+        );
+    }
+
+
+    //--------------------------------------------------
+    // Recover previous state
+    //--------------------------------------------------
 
     if(framManager.load(state))
     {
@@ -35,10 +58,19 @@ bool BootManager::begin()
 
         state.kernel.bootCount++;
 
+        state.kernel.persistentAvailable =framManager.isAvailable();
+
+        Serial.println(
+            "[BOOT] Previous state recovered"
+        );
 
     }
     else
     {
+
+        //--------------------------------------------------
+        // First execution
+        //--------------------------------------------------
 
         memset(
             &state,
@@ -52,17 +84,39 @@ bool BootManager::begin()
 
         state.kernel.recovering = false;
 
-
+        state.kernel.persistentAvailable = framManager.isAvailable();
 
         for(uint8_t i = 0; i < MAX_TASKS; i++)
         {
+
+            state.tasks[i].id =
+                static_cast<TaskID>(i);
+
+
+            state.tasks[i].checkpoint =
+                STEP_IDLE;
+
+
+            state.tasks[i].progress = 0;
+
 
             state.tasks[i].completed = false;
 
         }
 
+
+
+        Serial.println(
+            "[BOOT] Fresh startup"
+        );
+
     }
 
+
+
+    Serial.print(
+        "[BOOT] Count: "
+    );
 
 
     Serial.println(
@@ -71,19 +125,37 @@ bool BootManager::begin()
 
 
 
+    //--------------------------------------------------
+    // Persist current state
+    //--------------------------------------------------
+
+    if(framManager.isAvailable())
+    {
+        framManager.save(state);
+    }
+
+
+
+    /*
+       No limpiar:
+       
+       checkpoint
+       progress
+       completed
+
+       porque ResumeManager depende
+       de estos valores.
+    */
+
+
     state.kernel.recovering = false;
-
-
-
-    framManager.save(
-        state
-    );
 
 
 
     return true;
 
 }
+
 
 
 
@@ -96,9 +168,17 @@ bool BootManager::wasRecovery()
 
 
 
+
 PersistentState& BootManager::getState()
 {
 
     return state;
+
+}
+
+bool BootManager::hasPersistentMemory()
+{
+
+    return framManager.isAvailable();
 
 }

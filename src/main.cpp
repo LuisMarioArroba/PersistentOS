@@ -23,6 +23,7 @@
 
 #include "services/SensorService.h"
 #include "services/SensorBuffer.h"
+#include "services/FailureManager.h"
 
 
 //====================================================
@@ -76,7 +77,9 @@ SensorBuffer sensorBuffer;
 
 SensorService sensorService;
 
+FailureManager failureManager;
 
+bool systemFailed = false;
 
 //====================================================
 // Tasks
@@ -91,11 +94,44 @@ void sensorTask()
 
 void communicationTask()
 {
-    Serial.print("[Communication] Sending: ");
+
+    Serial.print(
+        "[Communication] Sending: "
+    );
+
 
     Serial.println(
         sensorService.getLastValue()
     );
+
+}
+
+
+
+bool checkFailureButton()
+{
+
+    static bool lastState = HIGH;
+
+
+    bool currentState =
+        digitalRead(
+            TEST_BUTTON_PIN
+        );
+
+
+    bool pressed =
+        (
+            lastState == HIGH &&
+            currentState == LOW
+        );
+
+
+    lastState = currentState;
+
+
+    return pressed;
+
 }
 
 
@@ -179,12 +215,34 @@ void setup()
     );
 
 
+    pinMode(
+        TEST_BUTTON_PIN,
+        INPUT_PULLUP
+    );
+
+
 
     //------------------------------------------------
     // Boot
     //------------------------------------------------
 
-    bootManager.begin();
+    if(!bootManager.begin())
+    {
+
+        Serial.println(
+            "[BOOT] Initialization failed"
+        );
+
+
+        while(true)
+        {
+
+        }
+
+    }
+
+
+    failureManager.begin();
 
 
 
@@ -243,7 +301,9 @@ void setup()
     // Boot Information
     //------------------------------------------------
 
-    if(bootManager.wasRecovery())
+    if(
+        bootManager.wasRecovery()
+    )
     {
 
         Serial.println(
@@ -256,6 +316,27 @@ void setup()
 
         Serial.println(
             "[BOOT] Normal Startup"
+        );
+
+    }
+
+
+
+    if(
+        bootManager.hasPersistentMemory()
+    )
+    {
+
+        Serial.println(
+            "[MEMORY] Persistent Storage Available"
+        );
+
+    }
+    else
+    {
+
+        Serial.println(
+            "[MEMORY] Volatile Mode"
         );
 
     }
@@ -293,7 +374,8 @@ void setup()
         &sensorManager,
         &sensorBuffer,
         &resumeManager,
-        &checkpointManager
+        &checkpointManager,
+        &failureManager
     );
 
 
@@ -320,6 +402,7 @@ void setup()
 
     Serial.println();
 
+
     Serial.println(
         "===== PersistentOS Started ====="
     );
@@ -337,7 +420,52 @@ void loop()
 
     systemTick++;
 
+        //------------------------------------------------
+    // Failure Simulation
+    //------------------------------------------------
 
+    if(
+    checkFailureButton()
+)
+{
+
+
+    if(!systemFailed)
+        {
+
+            Serial.println(
+                "[TEST] Failure Requested"
+            );
+
+
+            failureManager.triggerFailure();
+
+
+            systemFailed = true;
+
+
+        }
+        else
+        {
+
+
+            Serial.println(
+                "[TEST] Manual Recovery"
+            );
+
+
+            sensorService.resumeAfterFailure();
+
+
+            failureManager.clear();
+
+
+            systemFailed = false;
+
+
+        }
+
+    }
 
     PersistentState& state =
         bootManager.getState();
@@ -349,17 +477,38 @@ void loop()
 
 
 
+    //------------------------------------------------
+    // Execute Scheduler
+    //------------------------------------------------
+
     scheduler.execute();
 
 
 
-    fram.save(
-        state
-    );
+    //------------------------------------------------
+    // Save Persistent State
+    //------------------------------------------------
+
+    if(
+        bootManager.hasPersistentMemory()
+    )
+    {
+
+        fram.save(
+            state
+        );
+
+    }
 
 
 
-    if(systemTick % 100 == 0)
+    //------------------------------------------------
+    // Buffer Debug
+    //------------------------------------------------
+
+    if(
+        systemTick % 100 == 0
+    )
     {
 
         sensorService.printBufferStatus();

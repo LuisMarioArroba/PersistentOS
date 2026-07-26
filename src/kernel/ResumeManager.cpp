@@ -1,4 +1,5 @@
 #include "kernel/ResumeManager.h"
+#include "kernel/ExecutionSteps.h"
 
 ResumeManager::ResumeManager()
 {
@@ -59,7 +60,8 @@ bool ResumeManager::shouldResume(
 
     return
         state->tasks[taskId].completed == false &&
-        state->tasks[taskId].progress > 0;
+        state->tasks[taskId].progress > 0 &&
+        state->tasks[taskId].progress < 100;
 
 }
 
@@ -139,13 +141,16 @@ void ResumeManager::finishTask(
 
 
 
-    state->tasks[taskId].checkpoint = 0;
+    state->tasks[taskId].checkpoint =
+        STEP_COMPLETE;
 
 
-    state->tasks[taskId].progress = 100;
+    state->tasks[taskId].progress =
+        100;
 
 
-    state->tasks[taskId].completed = true;
+    state->tasks[taskId].completed =
+        true;
 
 
 

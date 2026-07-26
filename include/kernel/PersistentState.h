@@ -22,6 +22,7 @@ struct PersistentKernelState{
     uint32_t systemTick;
     uint32_t bootCount;
     bool recovering;
+    bool persistentAvailable;
 };
 
 struct PersistentTaskState{

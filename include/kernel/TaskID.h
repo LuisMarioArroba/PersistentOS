@@ -5,6 +5,8 @@ enum TaskID
 {
     TASK_SENSOR = 0,
 
+    TASK_NONE,
+
     TASK_COMMUNICATION,
 
     TASK_LED,

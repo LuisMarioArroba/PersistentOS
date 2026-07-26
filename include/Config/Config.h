@@ -6,6 +6,7 @@ GPIO Configuration
 */
 #define LED_PIN             2
 #define ONE_WIRE_BUS        4
+#define TEST_BUTTON_PIN 15
 
 /*
 Scheduler Configuration
