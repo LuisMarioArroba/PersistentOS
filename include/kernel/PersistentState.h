@@ -4,6 +4,7 @@
 #include "Config/Constants.h"
 #include "Config/Config.h"
 #include "kernel/TaskID.h"
+#include "kernel/CommunicationPacket.h"
 
 /*
 Kernel persistent information
@@ -46,6 +47,20 @@ struct PersistentSensorBuffer{
     uint8_t count;
 };
 
+struct PersistentCommunicationBuffer
+{
+
+    CommunicationPacket
+        packets[COMMUNICATION_BUFFER_SIZE];
+
+    uint8_t head;
+
+    uint8_t tail;
+
+    uint8_t count;
+
+};
+
 struct EnergyRecord{
     uint32_t timestamp;
     float voltage;
@@ -61,6 +76,7 @@ struct PersistentState
 {    PersistentKernelState kernel;
     PersistentTaskState tasks[MAX_TASKS];
     PersistentSensorBuffer sensorBuffer;
+    PersistentCommunicationBuffer communicationBuffer;
     PersistentEnergyHistory energyHistory;
 };
 

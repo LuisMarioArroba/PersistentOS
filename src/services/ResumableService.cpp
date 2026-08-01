@@ -98,6 +98,10 @@ void ResumableService::resumeAfterFailure()
     interrupted = false;
 
 
+    Serial.println(
+        "[Service] Recovery enabled"
+    );
+
 }
 
 
@@ -108,6 +112,9 @@ void ResumableService::pauseExecution()
 {
 
     interrupted = true;
+    Serial.println(
+        "[Service] Execution paused"
+    );
 
 
 }

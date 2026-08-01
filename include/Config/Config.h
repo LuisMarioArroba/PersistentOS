@@ -21,3 +21,11 @@ Persistent Memory Configuration
 #define SENSOR_BUFFER_SIZE      32
 #define ENERGY_HISTORY_SIZE     50
 #endif
+
+/*
+Communication protocol
+*/
+
+#define USE_SERIAL_COMMUNICATION     true
+#define USE_BLUETOOTH_COMMUNICATION  false
+#define USE_WIFI_COMMUNICATION       false

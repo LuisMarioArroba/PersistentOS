@@ -17,9 +17,16 @@ enum ExecutionStep
 
 
     // Communication
+
+    STEP_COMMUNICATION_CREATE,
+
     STEP_COMMUNICATION_PREPARE,
 
     STEP_COMMUNICATION_SEND,
+
+    STEP_COMMUNICATION_WAIT_ACK,
+
+    STEP_COMMUNICATION_CONFIRM,
 
 
     // Generic finish

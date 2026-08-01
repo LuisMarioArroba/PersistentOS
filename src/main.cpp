@@ -15,6 +15,7 @@
 #include "kernel/BootManager.h"
 #include "kernel/ExecutionCheckpoint.h"
 #include "kernel/ResumeManager.h"
+#include "kernel/CommunicationManager.h"
 
 
 //====================================================
@@ -24,6 +25,8 @@
 #include "services/SensorService.h"
 #include "services/SensorBuffer.h"
 #include "services/FailureManager.h"
+#include "services/CommunicationService.h"
+#include "services/CommunicationBuffer.h"
 
 
 //====================================================
@@ -79,6 +82,18 @@ SensorService sensorService;
 
 FailureManager failureManager;
 
+bool communicationInitialized = false;
+
+//====================================================
+// Communication
+//====================================================
+
+CommunicationManager communicationManager;
+
+CommunicationBuffer communicationBuffer;
+
+CommunicationService communicationService;
+
 bool systemFailed = false;
 
 //====================================================
@@ -95,14 +110,7 @@ void sensorTask()
 void communicationTask()
 {
 
-    Serial.print(
-        "[Communication] Sending: "
-    );
-
-
-    Serial.println(
-        sensorService.getLastValue()
-    );
+    communicationService.execute();
 
 }
 
@@ -244,7 +252,37 @@ void setup()
 
     failureManager.begin();
 
+    //------------------------------------------------
+    // Resume System
+    //------------------------------------------------
 
+    resumeManager.begin(
+        &bootManager.getState(),
+        bootManager.wasRecovery()
+    );
+
+
+
+    //------------------------------------------------
+    // Communication Manager
+    //------------------------------------------------
+
+    communicationInitialized =
+        communicationManager.begin();
+
+
+    if(communicationInitialized)
+    {
+        Serial.println(
+            "[COMM] Manager Ready"
+        );
+    }
+    else
+    {
+        Serial.println(
+            "[COMM] Manager unavailable"
+        );
+    }
 
     //------------------------------------------------
     // Persistent Buffer
@@ -252,6 +290,10 @@ void setup()
 
     sensorBuffer.attach(
         &bootManager.getState().sensorBuffer
+    );
+
+    communicationBuffer.attach(
+        &bootManager.getState().communicationBuffer
     );
 
 
@@ -263,19 +305,6 @@ void setup()
     checkpointManager.attachState(
         &bootManager.getState()
     );
-
-
-
-    //------------------------------------------------
-    // Resume System
-    //------------------------------------------------
-
-    resumeManager.begin(
-        &bootManager.getState(),
-        bootManager.wasRecovery()
-    );
-
-
 
     //------------------------------------------------
     // Scheduler
@@ -378,6 +407,14 @@ void setup()
         &failureManager
     );
 
+    communicationService.begin(
+        &communicationBuffer,
+        &communicationManager,
+        &resumeManager,
+        &checkpointManager,
+        &sensorService,
+        &failureManager
+    );
 
 
     //------------------------------------------------
@@ -448,20 +485,22 @@ void loop()
         else
         {
 
-
             Serial.println(
                 "[TEST] Manual Recovery"
             );
 
+            failureManager.clear();
 
             sensorService.resumeAfterFailure();
+
+
+            communicationService.resumeAfterFailure();
 
 
             failureManager.clear();
 
 
-            systemFailed = false;
-
+            systemFailed=false;
 
         }
 
