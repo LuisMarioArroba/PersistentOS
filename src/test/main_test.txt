@@ -12,10 +12,7 @@
 #include "kernel/ExecutionCheckpoint.h"
 #include "kernel/ResumeManager.h"
 #include "kernel/CommunicationManager.h"
-#include "kernel/EnergyManager.h"
-#include "kernel/SimulationManager.h"
-#include "kernel/BehaviorManager.h"
-#include "kernel/EnergyPredictionManager.h"
+
 
 //====================================================
 // Services
@@ -29,7 +26,8 @@
 
 #include "services/FailureManager.h"
 
-#include "services/AlarmManager.h"
+#include "services/EnergyManager.h"
+
 
 //====================================================
 // Hardware
@@ -51,9 +49,11 @@
 
 FRAMManager fram;
 
+
 BootManager bootManager(
     fram
 );
+
 
 ExecutionCheckpoint checkpointManager;
 
@@ -86,13 +86,6 @@ FailureManager failureManager;
 
 EnergyManager energyManager;
 
-EnergyPredictionManager energyPredictionManager;
-
-SimulationManager simulationManager;
-
-AlarmManager alarmManager;
-
-BehaviorManager behaviorManager;
 
 //====================================================
 // Services
@@ -116,6 +109,7 @@ TestManager testManager;
 
 void setup()
 {
+
     Serial.begin(
         115200
     );
@@ -154,51 +148,29 @@ void setup()
 
     Serial.println();
 
-    simulationManager.begin();
-
-    alarmManager.begin(
-        &communicationManager
-    );
-
 
     //--------------------------------------------------
     // Boot
     //--------------------------------------------------
 
-    if(
-        !bootManager.begin()
-    )
-    {
-        Serial.println(
-            "[BOOT] ERROR"
-        );
-
-        return;
-    }
+    bootManager.begin();
 
 
     //--------------------------------------------------
     // Resume manager
-    //
-    // IMPORTANT:
-    //
-    // Do NOT hardcode false.
-    //
-    // If BootManager recovered a previous persistent
-    // state, recovery mode is enabled.
     //--------------------------------------------------
 
     resumeManager.begin(
 
         &bootManager.getState(),
 
-        bootManager.wasRecovery()
+        false
 
     );
 
 
     //--------------------------------------------------
-    // Persistent sensor buffer
+    // Persistent buffers
     //--------------------------------------------------
 
     sensorBuffer.attach(
@@ -210,10 +182,6 @@ void setup()
     );
 
 
-    //--------------------------------------------------
-    // Persistent communication buffer
-    //--------------------------------------------------
-
     communicationBuffer.attach(
 
         &bootManager
@@ -224,31 +192,6 @@ void setup()
 
 
     //--------------------------------------------------
-    // Hardware
-    //--------------------------------------------------
-
-    sensorManager.begin();
-
-    if(
-        communicationManager.begin()
-    )
-    {
-
-        Serial.println(
-            "[SYSTEM] Communication manager ready"
-        );
-
-    }
-    else
-    {
-
-        Serial.println(
-            "[SYSTEM] Communication manager FAILED"
-        );
-
-    }
-
-     //--------------------------------------------------
     // Checkpoint manager
     //--------------------------------------------------
 
@@ -258,9 +201,15 @@ void setup()
 
     );
 
-    checkpointManager.attachFRAM(
-        &fram
-    );
+
+    //--------------------------------------------------
+    // Hardware
+    //--------------------------------------------------
+
+    sensorManager.begin();
+
+    communicationManager.begin();
+
 
     //--------------------------------------------------
     // Failure manager
@@ -276,8 +225,7 @@ void setup()
     energyManager.begin(
         100.0
     );
-    energyPredictionManager.begin();
-    behaviorManager.begin();
+
 
     //--------------------------------------------------
     // Sensor service
@@ -293,9 +241,8 @@ void setup()
 
         &checkpointManager,
 
-        &failureManager,
+        &failureManager
 
-        &bootManager.getState()
     );
 
 
@@ -315,9 +262,7 @@ void setup()
 
         &sensorService,
 
-        &failureManager,
-
-        &bootManager.getState()
+        &failureManager
 
     );
 
@@ -330,9 +275,7 @@ void setup()
 
         &checkpointManager,
 
-        &failureManager,
-
-        &energyManager
+        &failureManager
 
     );
 
@@ -359,86 +302,8 @@ void setup()
         "[SYSTEM] Energy manager ready"
     );
 
+    Serial.println();
 
-    //--------------------------------------------------
-    // Recovery information
-    //--------------------------------------------------
-
-    if(
-        bootManager.wasRecovery()
-    )
-    {
-        Serial.println();
-
-        Serial.println(
-            "[SYSTEM] ================================="
-        );
-
-        Serial.println(
-            "[SYSTEM] RECOVERY BOOT DETECTED"
-        );
-
-        Serial.println(
-            "[SYSTEM] ================================="
-        );
-
-
-        for(
-            uint8_t i = 0;
-            i < MAX_TASKS;
-            i++
-        )
-        {
-            Serial.print(
-                "[SYSTEM] Task "
-            );
-
-            Serial.print(
-                i
-            );
-
-            Serial.print(
-                " checkpoint: "
-            );
-
-            Serial.print(
-                bootManager
-                    .getState()
-                    .tasks[i]
-                    .checkpoint
-            );
-
-            Serial.print(
-                " | progress: "
-            );
-
-            Serial.print(
-                bootManager
-                    .getState()
-                    .tasks[i]
-                    .progress
-            );
-
-            Serial.print(
-                "% | completed: "
-            );
-
-            Serial.println(
-                bootManager
-                    .getState()
-                    .tasks[i]
-                    .completed
-                        ? "YES"
-                        : "NO"
-            );
-        }
-
-        Serial.println(
-            "[SYSTEM] ================================="
-        );
-
-        Serial.println();
-    }
 }
 
 
@@ -457,65 +322,29 @@ void loop()
 
 
     //--------------------------------------------------
-    // 2. Alarm
-    //--------------------------------------------------
-/*
-    alarmManager.execute(
-        sensorManager.getTemperature()
-    );
-*/
-
-    //--------------------------------------------------
-    // 3. Communication state
-    //--------------------------------------------------
-
-    communicationManager.updateConnectionState();
-
-
-    //--------------------------------------------------
-    // 4. Communication
+    // 2. Communication
     //--------------------------------------------------
 
     communicationService.execute();
 
 
     //--------------------------------------------------
-    // 5. Failure tests
+    // 3. Test manager
     //--------------------------------------------------
 
     testManager.execute();
 
-    //--------------------------------------------------
-    // 6. Energy Prediction
-    //--------------------------------------------------
-    energyPredictionManager.update();
 
     //--------------------------------------------------
-    // 7. Simulation
-    //--------------------------------------------------
-
-    simulationManager.execute();
-
-
-    //--------------------------------------------------
-    // 8. Energy
+    // 4. Energy
     //--------------------------------------------------
 
     energyManager.execute();
 
-    energyPredictionManager.observe(
-        energyManager.getEnergy()
-    );
 
-    energyManager.execute();
-
-
-    energyPredictionManager.observe(
-        energyManager.getEnergy()
-    );
-
-
-    energyPredictionManager.update();
+    //--------------------------------------------------
+    // Loop period
+    //--------------------------------------------------
 
     delay(
         100

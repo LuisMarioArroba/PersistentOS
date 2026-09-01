@@ -59,6 +59,8 @@ struct PersistentCommunicationBuffer
 
     uint8_t count;
 
+    uint32_t packetCounter;
+
 };
 
 struct EnergyRecord{
@@ -78,6 +80,9 @@ struct PersistentState
     PersistentSensorBuffer sensorBuffer;
     PersistentCommunicationBuffer communicationBuffer;
     PersistentEnergyHistory energyHistory;
+    float pendingSensorValue;
+    float lastSensorValue;
+    uint32_t lastSensorTimestamp;
 };
 
 #endif

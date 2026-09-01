@@ -4,11 +4,11 @@
 
 #include <Arduino.h>
 
-
 #include "kernel/ResumeManager.h"
 #include "kernel/ExecutionCheckpoint.h"
 #include "kernel/TaskID.h"
 #include "kernel/ExecutionSteps.h"
+#include "services/FailureManager.h"
 
 
 
@@ -21,15 +21,18 @@ protected:
 
     ExecutionCheckpoint* checkpointManager;
 
+    FailureManager* failureManager;
+
+
     TaskID taskId;
 
 
-    // Estado interno de pausa
     bool interrupted;
 
 
 
 public:
+
 
     ResumableService();
 
@@ -37,11 +40,20 @@ public:
     virtual ~ResumableService() = default;
 
 
+    bool isInterrupted() const;
+
+
 
     void begin(
+
         ResumeManager* resumePtr,
+
         ExecutionCheckpoint* checkpointPtr,
-        TaskID id
+
+        TaskID id,
+
+        FailureManager* failurePtr
+
     );
 
 
@@ -50,7 +62,6 @@ public:
 
 
 
-    // Recuperación manual sin FRAM
     void resumeAfterFailure();
 
 
@@ -69,8 +80,11 @@ protected:
 
 
     void updateCheckpoint(
+
         uint8_t checkpoint,
+
         uint8_t progress
+
     );
 
 

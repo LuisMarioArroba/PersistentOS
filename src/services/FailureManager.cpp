@@ -1,32 +1,41 @@
 #include "services/FailureManager.h"
 
 
+//====================================================
+// Constructor
+//====================================================
 
 FailureManager::FailureManager()
 {
 
-    failureRequested = false;
+    failureRequested =
+        false;
 
 }
 
 
-
+//====================================================
+// Begin
+//====================================================
 
 void FailureManager::begin()
 {
 
-    failureRequested = false;
+    failureRequested =
+        false;
 
 }
 
 
-
+//====================================================
+// Trigger failure
+//====================================================
 
 void FailureManager::triggerFailure()
 {
 
-    failureRequested = true;
-
+    failureRequested =
+        true;
 
     Serial.println(
         "[FailureManager] Failure triggered"
@@ -35,7 +44,9 @@ void FailureManager::triggerFailure()
 }
 
 
-
+//====================================================
+// Has failure
+//====================================================
 
 bool FailureManager::hasFailure() const
 {
@@ -45,13 +56,15 @@ bool FailureManager::hasFailure() const
 }
 
 
-
+//====================================================
+// Clear
+//====================================================
 
 void FailureManager::clear()
 {
 
-    failureRequested = false;
-
+    failureRequested =
+        false;
 
     Serial.println(
         "[FailureManager] Failure cleared"

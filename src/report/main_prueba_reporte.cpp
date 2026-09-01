@@ -46,6 +46,13 @@
 
 
 //====================================================
+// Reporte (build persistentos1_reporte)
+//====================================================
+
+#include "report/ReportLogger.h"
+
+
+//====================================================
 // Persistent kernel
 //====================================================
 
@@ -111,6 +118,213 @@ TestManager testManager;
 
 
 //====================================================
+// Report: tageo de escenario (independiente del menú
+// de simulación de energía de TestManager, que usa las
+// teclas '1'-'4', 's'/'S' y 'm'/'M')
+//
+// Los 7 escenarios son los de la Sección de Resultados
+// del paper. 1, 4, 5, 6 y 7 corresponden 1:1 a los
+// puntos de falla que ya dispara TestManager con el
+// botón físico (TEST_BUTTON_PIN); 2 y 3 dependen del
+// interruptor de energía físico y deben tagearse a mano
+// en el instante en que se accionan.
+//====================================================
+
+namespace
+{
+
+    struct ScenarioTag
+    {
+        char key;
+        uint8_t id;
+        const char* name;
+    };
+
+    const ScenarioTag SCENARIOS[7] =
+    {
+        { 'a', 1, "NORMAL" },
+        { 'b', 2, "REMOTE_OFF" },
+        { 'c', 3, "ACK_DELAYED" },
+        { 'd', 4, "CUT_WAIT_ACK" },
+        { 'e', 5, "CUT_BEFORE_SEND" },
+        { 'f', 6, "CUT_AFTER_CREATE" },
+        { 'g', 7, "CUT_RECEIVER_ACK_LOST" }
+    };
+
+    void printScenarioMenu()
+    {
+
+        Serial.println();
+
+        Serial.println(
+            "[REPORT] ================================="
+        );
+
+        Serial.println(
+            "[REPORT] Tagueo de escenario (paper, Sección 4)"
+        );
+
+        Serial.println(
+            "[REPORT] ================================="
+        );
+
+        for(
+            uint8_t i = 0;
+            i < 7;
+            i++
+        )
+        {
+
+            Serial.print(
+                "[REPORT] "
+            );
+
+            Serial.print(
+                SCENARIOS[i].key
+            );
+
+            Serial.print(
+                " -> "
+            );
+
+            Serial.print(
+                SCENARIOS[i].id
+            );
+
+            Serial.print(
+                ". "
+            );
+
+            Serial.println(
+                SCENARIOS[i].name
+            );
+
+        }
+
+        Serial.println(
+            "[REPORT] h -> mostrar este menú"
+        );
+
+        Serial.println(
+            "[REPORT] ================================="
+        );
+
+    }
+
+
+    void processReportSerial()
+    {
+
+        if(
+            !Serial.available()
+        )
+        {
+
+            return;
+
+        }
+
+
+        //--------------------------------------------------
+        // Solo consume el byte si es una de nuestras teclas
+        // ('a'-'g', 'h'); cualquier otra tecla (dígitos,
+        // 's'/'S', 'm'/'M') se deja intacta para que
+        // TestManager::processSerial() la procese en su
+        // propio turno, dentro de testManager.execute().
+        //--------------------------------------------------
+
+        char peeked =
+            (char) Serial.peek();
+
+
+        if(
+            peeked == 'h' ||
+            peeked == 'H'
+        )
+        {
+
+            Serial.read();
+
+            printScenarioMenu();
+
+            return;
+
+        }
+
+
+        for(
+            uint8_t i = 0;
+            i < 7;
+            i++
+        )
+        {
+
+            if(
+                peeked == SCENARIOS[i].key
+            )
+            {
+
+                Serial.read();
+
+                ReportLogger::setScenario(
+                    SCENARIOS[i].id,
+                    SCENARIOS[i].name
+                );
+
+                return;
+
+            }
+
+        }
+
+    }
+
+
+    //--------------------------------------------------
+    // Log periódico de energía/comportamiento para la
+    // gráfica de trazas de energía local/remota.
+    //--------------------------------------------------
+
+    uint32_t lastEnergyLogMillis =
+        0;
+
+    const uint32_t ENERGY_LOG_INTERVAL_MS =
+        2000;
+
+    void logEnergyIfDue()
+    {
+
+        uint32_t now =
+            millis();
+
+
+        if(
+            now - lastEnergyLogMillis < ENERGY_LOG_INTERVAL_MS
+        )
+        {
+
+            return;
+
+        }
+
+
+        lastEnergyLogMillis =
+            now;
+
+        ReportLogger::event(
+            "ENERGY",
+            0,
+            (long)(
+                energyManager.getEnergy() * 100.0f
+            )
+        );
+
+    }
+
+}
+
+
+//====================================================
 // Setup
 //====================================================
 
@@ -145,7 +359,7 @@ void setup()
     );
 
     Serial.println(
-        "      PERSISTENT OS TEST MODE"
+        "  PERSISTENT OS - REPORT BUILD"
     );
 
     Serial.println(
@@ -153,6 +367,12 @@ void setup()
     );
 
     Serial.println();
+
+    ReportLogger::begin();
+
+    ReportLogger::enable();
+
+    printScenarioMenu();
 
     simulationManager.begin();
 
@@ -177,17 +397,6 @@ void setup()
     }
 
 
-    //--------------------------------------------------
-    // Resume manager
-    //
-    // IMPORTANT:
-    //
-    // Do NOT hardcode false.
-    //
-    // If BootManager recovered a previous persistent
-    // state, recovery mode is enabled.
-    //--------------------------------------------------
-
     resumeManager.begin(
 
         &bootManager.getState(),
@@ -197,10 +406,6 @@ void setup()
     );
 
 
-    //--------------------------------------------------
-    // Persistent sensor buffer
-    //--------------------------------------------------
-
     sensorBuffer.attach(
 
         &bootManager
@@ -209,10 +414,6 @@ void setup()
 
     );
 
-
-    //--------------------------------------------------
-    // Persistent communication buffer
-    //--------------------------------------------------
 
     communicationBuffer.attach(
 
@@ -248,10 +449,6 @@ void setup()
 
     }
 
-     //--------------------------------------------------
-    // Checkpoint manager
-    //--------------------------------------------------
-
     checkpointManager.attachState(
 
         &bootManager.getState()
@@ -262,26 +459,13 @@ void setup()
         &fram
     );
 
-    //--------------------------------------------------
-    // Failure manager
-    //--------------------------------------------------
-
     failureManager.begin();
-
-
-    //--------------------------------------------------
-    // Energy manager
-    //--------------------------------------------------
 
     energyManager.begin(
         100.0
     );
     energyPredictionManager.begin();
     behaviorManager.begin();
-
-    //--------------------------------------------------
-    // Sensor service
-    //--------------------------------------------------
 
     sensorService.begin(
 
@@ -297,11 +481,6 @@ void setup()
 
         &bootManager.getState()
     );
-
-
-    //--------------------------------------------------
-    // Communication service
-    //--------------------------------------------------
 
     communicationService.begin(
 
@@ -321,11 +500,6 @@ void setup()
 
     );
 
-
-    //--------------------------------------------------
-    // Test manager
-    //--------------------------------------------------
-
     testManager.begin(
 
         &checkpointManager,
@@ -336,10 +510,6 @@ void setup()
 
     );
 
-
-    //--------------------------------------------------
-    // System information
-    //--------------------------------------------------
 
     Serial.println();
 
@@ -361,13 +531,17 @@ void setup()
 
 
     //--------------------------------------------------
-    // Recovery information
+    // Clasificación de boot para el reporte: un boot en
+    // frío marca BOOT_COLD; un boot de recuperación abre
+    // la ventana de latencia que se cierra sola en el
+    // primer evento CONFIRM (ver ReportLogger::event()).
     //--------------------------------------------------
 
     if(
         bootManager.wasRecovery()
     )
     {
+
         Serial.println();
 
         Serial.println(
@@ -438,7 +612,21 @@ void setup()
         );
 
         Serial.println();
+
+        ReportLogger::beginRecoveryTracking();
+
     }
+    else
+    {
+
+        ReportLogger::event(
+            "BOOT_COLD",
+            0,
+            0
+        );
+
+    }
+
 }
 
 
@@ -450,6 +638,13 @@ void loop()
 {
 
     //--------------------------------------------------
+    // 0. Report: tageo manual de escenario
+    //--------------------------------------------------
+
+    processReportSerial();
+
+
+    //--------------------------------------------------
     // 1. Sensor
     //--------------------------------------------------
 
@@ -457,48 +652,40 @@ void loop()
 
 
     //--------------------------------------------------
-    // 2. Alarm
-    //--------------------------------------------------
-/*
-    alarmManager.execute(
-        sensorManager.getTemperature()
-    );
-*/
-
-    //--------------------------------------------------
-    // 3. Communication state
+    // 2. Communication state
     //--------------------------------------------------
 
     communicationManager.updateConnectionState();
 
 
     //--------------------------------------------------
-    // 4. Communication
+    // 3. Communication
     //--------------------------------------------------
 
     communicationService.execute();
 
 
     //--------------------------------------------------
-    // 5. Failure tests
+    // 4. Failure tests (botón físico + menú de energía
+    //    sintética de TestManager, teclas '1'-'4'/'s'/'m')
     //--------------------------------------------------
 
     testManager.execute();
 
     //--------------------------------------------------
-    // 6. Energy Prediction
+    // 5. Energy prediction
     //--------------------------------------------------
+
     energyPredictionManager.update();
 
     //--------------------------------------------------
-    // 7. Simulation
+    // 6. Simulation
     //--------------------------------------------------
 
     simulationManager.execute();
 
-
     //--------------------------------------------------
-    // 8. Energy
+    // 7. Energy
     //--------------------------------------------------
 
     energyManager.execute();
@@ -506,16 +693,15 @@ void loop()
     energyPredictionManager.observe(
         energyManager.getEnergy()
     );
-
-    energyManager.execute();
-
-
-    energyPredictionManager.observe(
-        energyManager.getEnergy()
-    );
-
 
     energyPredictionManager.update();
+
+
+    //--------------------------------------------------
+    // 8. Report: traza periódica de energía
+    //--------------------------------------------------
+
+    logEnergyIfDue();
 
     delay(
         100

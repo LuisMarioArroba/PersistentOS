@@ -1,59 +1,66 @@
 #include "kernel/FRAMManager.h"
 
 
-
-/*
-    Memoria simulada temporal.
-
-    Será reemplazada por FRAM física
-    cuando exista el hardware.
-*/
-
-
-static PersistentState persistentMemory;
-
-static bool memoryAvailable = false;
-
-
-
+//====================================================
+// Constructor
+//====================================================
 
 FRAMManager::FRAMManager()
 {
 
-    initialized = false;
+    initialized =
+        false;
 
-    hardwareAvailable = false;
+    hardwareAvailable =
+        false;
 
-    baseAddress = 0;
+    baseAddress =
+        0;
 
 }
 
 
-
-
+//====================================================
+// Begin
+//====================================================
 
 bool FRAMManager::begin()
 {
 
-    initialized = true;
+    //--------------------------------------------------
+    // Initialize I2C
+    //--------------------------------------------------
+
+    Wire.begin(
+        FRAM_SDA_PIN,
+        FRAM_SCL_PIN
+    );
 
 
-    /*
-       Actualmente no existe FRAM física.
-
-       Cuando exista el hardware:
-
-       hardwareAvailable =
-            detectFRAM();
-
-    */
+    Wire.setClock(
+        400000
+    );
 
 
-    hardwareAvailable = false;
+    //--------------------------------------------------
+    // Detect FRAM
+    //--------------------------------------------------
+
+    hardwareAvailable =
+        detectFRAM();
 
 
+    initialized =
+        true;
 
-    if(hardwareAvailable)
+
+    //--------------------------------------------------
+    // Result
+    //--------------------------------------------------
+
+    if(
+        hardwareAvailable
+    )
     {
 
         Serial.println(
@@ -71,150 +78,182 @@ bool FRAMManager::begin()
     }
 
 
-
     return true;
 
 }
 
 
+//====================================================
+// Detect FRAM
+//====================================================
 
-
-
-bool FRAMManager::isAvailable() const
+bool FRAMManager::detectFRAM()
 {
 
-    return hardwareAvailable;
+    Wire.beginTransmission(
+        FRAM_I2C_ADDRESS
+    );
+
+
+    uint8_t error =
+        Wire.endTransmission();
+
+
+    return
+        error == 0;
 
 }
 
 
+//====================================================
+// Is available
+//====================================================
+
+bool FRAMManager::isAvailable() const
+{
+
+    return
+        hardwareAvailable;
+
+}
 
 
-
+//====================================================
+// Save
+//====================================================
 
 bool FRAMManager::save(
     const PersistentState& state
 )
 {
 
-    if(!initialized)
+    if(
+        !initialized
+    )
     {
+
         return false;
+
     }
 
 
-
-    if(hardwareAvailable)
+    if(
+        !hardwareAvailable
+    )
     {
 
-        /*
-            Aquí irá:
-
-            writeMemory(
-                baseAddress,
-                (uint8_t*)&state,
-                sizeof(PersistentState)
-            );
-
-        */
-
-    }
-    else
-    {
-
-        memcpy(
-            &persistentMemory,
-            &state,
-            sizeof(PersistentState)
-        );
-
-
-        memoryAvailable = true;
+        return false;
 
     }
 
 
+    return writeMemory(
 
-    return true;
+        baseAddress,
+
+        reinterpret_cast<const uint8_t*>(&state),
+
+        sizeof(PersistentState)
+
+    );
 
 }
 
 
-
-
+//====================================================
+// Load
+//====================================================
 
 bool FRAMManager::load(
     PersistentState& state
 )
 {
 
-    if(!initialized)
+    if(
+        !initialized
+    )
     {
+
         return false;
+
     }
 
 
-
-    if(hardwareAvailable)
+    if(
+        !hardwareAvailable
+    )
     {
 
-        /*
-            Aquí irá:
-
-            readMemory(
-                baseAddress,
-                (uint8_t*)&state,
-                sizeof(PersistentState)
-            );
-        */
-
-
-        return true;
+        return false;
 
     }
-    else
-    {
-
-        if(!memoryAvailable)
-        {
-            return false;
-        }
 
 
-        memcpy(
-            &state,
-            &persistentMemory,
-            sizeof(PersistentState)
-        );
+    return readMemory(
 
+        baseAddress,
 
-        return true;
+        reinterpret_cast<uint8_t*>(&state),
 
-    }
+        sizeof(PersistentState)
+
+    );
 
 }
 
 
-
-
+//====================================================
+// Clear
+//====================================================
 
 bool FRAMManager::clear()
 {
 
-    if(!initialized)
+    if(
+        !initialized
+    )
     {
+
         return false;
+
     }
 
 
-    memset(
-        &persistentMemory,
-        0,
-        sizeof(PersistentState)
-    );
+    if(
+        !hardwareAvailable
+    )
+    {
+
+        return false;
+
+    }
 
 
-    memoryAvailable = false;
+    uint8_t zero =
+        0;
+
+
+    for(
+        size_t i = 0;
+        i < sizeof(PersistentState);
+        i++
+    )
+    {
+
+        if(
+            !writeMemory(
+                baseAddress + i,
+                &zero,
+                1
+            )
+        )
+        {
+
+            return false;
+
+        }
+
+    }
 
 
     return true;
@@ -222,8 +261,9 @@ bool FRAMManager::clear()
 }
 
 
-
-
+//====================================================
+// Write memory
+//====================================================
 
 bool FRAMManager::writeMemory(
     uint32_t address,
@@ -232,13 +272,123 @@ bool FRAMManager::writeMemory(
 )
 {
 
+    if(
+        data == nullptr ||
+        size == 0
+    )
+    {
+
+        return false;
+
+    }
+
+
+    //--------------------------------------------------
+    // FRAM uses a 16-bit memory address
+    //--------------------------------------------------
+
+    while(
+        size > 0
+    )
+    {
+
+        size_t chunkSize =
+            size;
+
+
+        /*
+         * Keep each I2C transaction small.
+         *
+         * 24 bytes of data leaves room for:
+         * - 2 address bytes
+         * - I2C overhead
+         *
+         * This also avoids depending on the
+         * ESP32 Wire buffer size.
+         */
+
+        if(
+            chunkSize > 24
+        )
+        {
+
+            chunkSize =
+                24;
+
+        }
+
+
+        Wire.beginTransmission(
+            FRAM_I2C_ADDRESS
+        );
+
+
+        Wire.write(
+            (uint8_t)(
+                (address >> 8) &
+                0xFF
+            )
+        );
+
+
+        Wire.write(
+            (uint8_t)(
+                address &
+                0xFF
+            )
+        );
+
+
+        for(
+            size_t i = 0;
+            i < chunkSize;
+            i++
+        )
+        {
+
+            Wire.write(
+                data[i]
+            );
+
+        }
+
+
+        uint8_t error =
+            Wire.endTransmission();
+
+
+        if(
+            error != 0
+        )
+        {
+
+            return false;
+
+        }
+
+
+        address +=
+            chunkSize;
+
+
+        data +=
+            chunkSize;
+
+
+        size -=
+            chunkSize;
+
+    }
+
+
     return true;
 
 }
 
 
-
-
+//====================================================
+// Read memory
+//====================================================
 
 bool FRAMManager::readMemory(
     uint32_t address,
@@ -246,6 +396,136 @@ bool FRAMManager::readMemory(
     size_t size
 )
 {
+
+    if(
+        data == nullptr ||
+        size == 0
+    )
+    {
+
+        return false;
+
+    }
+
+
+    while(
+        size > 0
+    )
+    {
+
+        size_t chunkSize =
+            size;
+
+
+        if(
+            chunkSize > 24
+        )
+        {
+
+            chunkSize =
+                24;
+
+        }
+
+
+        //--------------------------------------------------
+        // Set FRAM memory address
+        //--------------------------------------------------
+
+        Wire.beginTransmission(
+            FRAM_I2C_ADDRESS
+        );
+
+
+        Wire.write(
+            (uint8_t)(
+                (address >> 8) &
+                0xFF
+            )
+        );
+
+
+        Wire.write(
+            (uint8_t)(
+                address &
+                0xFF
+            )
+        );
+
+
+        uint8_t error =
+            Wire.endTransmission(
+                false
+            );
+
+
+        if(
+            error != 0
+        )
+        {
+
+            return false;
+
+        }
+
+
+        //--------------------------------------------------
+        // Read data
+        //--------------------------------------------------
+
+        size_t received =
+            Wire.requestFrom(
+                FRAM_I2C_ADDRESS,
+                chunkSize
+            );
+
+
+        if(
+            received != chunkSize
+        )
+        {
+
+            return false;
+
+        }
+
+
+        for(
+            size_t i = 0;
+            i < chunkSize;
+            i++
+        )
+        {
+
+            if(
+                !Wire.available()
+            )
+            {
+
+                return false;
+
+            }
+
+
+            data[i] =
+                Wire.read();
+
+        }
+
+
+        address +=
+            chunkSize;
+
+
+        data +=
+            chunkSize;
+
+
+        size -=
+            chunkSize;
+
+    }
+
 
     return true;
 

@@ -1,192 +1,305 @@
 #include "services/ResumeableService.h"
 
+
+//====================================================
+// Constructor
+//====================================================
+
 ResumableService::ResumableService()
 {
+    resumeManager =
+        nullptr;
 
-    resumeManager = nullptr;
+    checkpointManager =
+        nullptr;
 
-    checkpointManager = nullptr;
+    failureManager =
+        nullptr;
 
-    taskId = TASK_NONE;
+    taskId =
+        TASK_NONE;
 
-
-    interrupted = false;
-
+    interrupted =
+        false;
 }
 
 
-
-
+//====================================================
+// Begin
+//====================================================
 
 void ResumableService::begin(
     ResumeManager* resumePtr,
     ExecutionCheckpoint* checkpointPtr,
-    TaskID id
+    TaskID id,
+    FailureManager* failurePtr
 )
 {
+    resumeManager =
+        resumePtr;
 
-    resumeManager = resumePtr;
+    checkpointManager =
+        checkpointPtr;
 
-    checkpointManager = checkpointPtr;
+    taskId =
+        id;
 
-    taskId = id;
+    failureManager =
+        failurePtr;
 
+    interrupted =
+        false;
 }
 
 
-
-
+//====================================================
+// Execute
+//====================================================
 
 void ResumableService::execute()
 {
+    //--------------------------------------------------
+    // GLOBAL FAILURE CONTROL
+    //--------------------------------------------------
 
-
-    if(interrupted)
+    if(
+        failureManager != nullptr &&
+        failureManager->hasFailure()
+    )
     {
-
-        Serial.println(
-            "[Service] Waiting recovery"
-        );
-
-
-        return;
-
-    }
-
-
-
-    if(shouldResume())
-    {
-
-        Serial.println(
-            "[Service] Resume execution"
-        );
-
-
-        executeResume();
-
-
-
-        if(resumeManager != nullptr)
+        if(!interrupted)
         {
+            Serial.print(
+                "[Service] "
+            );
 
-            resumeManager->markResumed(
+            Serial.print(
                 taskId
             );
 
+            Serial.println(
+                " paused by failure"
+            );
+
+            pauseExecution();
         }
 
-
+        return;
     }
-    else
+
+
+    //--------------------------------------------------
+    // RECOVERY AFTER FAILURE
+    //--------------------------------------------------
+
+    if(interrupted)
     {
+        Serial.print(
+            "[Service] Recovery detected - Task "
+        );
 
-        executeNormal();
+        Serial.println(
+            taskId
+        );
 
+        resumeAfterFailure();
     }
 
 
+    //--------------------------------------------------
+    // RECOVERY AFTER REBOOT
+    //
+    // Only occurs when ResumeManager is in recovery
+    // mode and a persistent incomplete checkpoint
+    // exists.
+    //--------------------------------------------------
+
+    if(shouldResume())
+    {
+        uint8_t checkpoint =
+            getCheckpoint();
+
+
+        uint8_t progress =
+            getProgress();
+
+
+        Serial.print(
+            "[Service] Resume execution - Task "
+        );
+
+        Serial.println(
+            taskId
+        );
+
+
+        Serial.print(
+            "[Service] Resume checkpoint: "
+        );
+
+        Serial.println(
+            checkpoint
+        );
+
+
+        Serial.print(
+            "[Service] Resume progress: "
+        );
+
+        Serial.print(
+            progress
+        );
+
+        Serial.println(
+            "%"
+        );
+
+
+        //--------------------------------------------------
+        // Execute exactly from the persisted checkpoint
+        //--------------------------------------------------
+
+        executeResume();
+
+/*
+        //--------------------------------------------------
+        // Prevent executing the boot recovery repeatedly
+        //--------------------------------------------------
+
+        if(
+            resumeManager != nullptr
+        )
+        {
+            resumeManager->markResumed(
+                taskId
+            );
+        }
+*/
+
+        return;
+    }
+
+
+    //--------------------------------------------------
+    // NORMAL EXECUTION
+    //
+    // IMPORTANT:
+    //
+    // executeNormal() is responsible for continuing
+    // from the checkpoint currently stored.
+    //--------------------------------------------------
+
+    executeNormal();
 }
 
 
-
-
+//====================================================
+// Recovery after failure
+//====================================================
 
 void ResumableService::resumeAfterFailure()
 {
-
-    interrupted = false;
+    interrupted =
+        false;
 
 
     Serial.println(
         "[Service] Recovery enabled"
     );
-
 }
 
 
-
-
+//====================================================
+// Pause
+//====================================================
 
 void ResumableService::pauseExecution()
 {
+    interrupted =
+        true;
 
-    interrupted = true;
+
     Serial.println(
         "[Service] Execution paused"
     );
-
-
 }
 
 
-
-
+//====================================================
+// Should resume
+//====================================================
 
 bool ResumableService::shouldResume() const
 {
-
-    if(resumeManager == nullptr)
+    if(
+        resumeManager == nullptr
+    )
     {
         return false;
     }
 
 
-    return resumeManager->shouldResume(
-        taskId
-    );
-
+    return
+        resumeManager->shouldResume(
+            taskId
+        );
 }
 
 
-
-
+//====================================================
+// Get checkpoint
+//====================================================
 
 uint8_t ResumableService::getCheckpoint() const
 {
-
-    if(resumeManager == nullptr)
+    if(
+        resumeManager == nullptr
+    )
     {
         return 0;
     }
 
 
-    return resumeManager->getResumeCheckpoint(
-        taskId
-    );
-
+    return
+        resumeManager->getResumeCheckpoint(
+            taskId
+        );
 }
 
 
-
-
+//====================================================
+// Get progress
+//====================================================
 
 uint8_t ResumableService::getProgress() const
 {
-
-    if(resumeManager == nullptr)
+    if(
+        resumeManager == nullptr
+    )
     {
         return 0;
     }
 
 
-    return resumeManager->getProgress(
-        taskId
-    );
-
+    return
+        resumeManager->getProgress(
+            taskId
+        );
 }
 
 
-
-
+//====================================================
+// Update checkpoint
+//====================================================
 
 void ResumableService::updateCheckpoint(
     uint8_t checkpoint,
     uint8_t progress
 )
 {
-
-    if(checkpointManager == nullptr)
+    if(
+        checkpointManager == nullptr
+    )
     {
         return;
     }
@@ -197,37 +310,64 @@ void ResumableService::updateCheckpoint(
         checkpoint,
         progress
     );
-
 }
 
 
-
-
+//====================================================
+// Finish execution
+//====================================================
 
 void ResumableService::finishExecution()
 {
+    //--------------------------------------------------
+    // Complete persistent task state
+    //--------------------------------------------------
 
-    if(resumeManager != nullptr)
+    if(
+        resumeManager != nullptr
+    )
     {
-
         resumeManager->finishTask(
             taskId
         );
-
     }
 
 
+    //--------------------------------------------------
+    // Persist completion
+    //--------------------------------------------------
 
-    if(checkpointManager != nullptr)
+    if(
+        checkpointManager != nullptr
+    )
     {
-
         checkpointManager->update(
             taskId,
             STEP_COMPLETE,
             100
         );
-
     }
 
 
+    Serial.print(
+        "[Service] Task "
+    );
+
+    Serial.print(
+        taskId
+    );
+
+    Serial.println(
+        " completed"
+    );
+}
+
+
+//====================================================
+// Is interrupted
+//====================================================
+
+bool ResumableService::isInterrupted() const
+{
+    return interrupted;
 }

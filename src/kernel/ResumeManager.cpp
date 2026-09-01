@@ -1,69 +1,148 @@
 #include "kernel/ResumeManager.h"
 #include "kernel/ExecutionSteps.h"
 
+
+//====================================================
+// Constructor
+//====================================================
+
 ResumeManager::ResumeManager()
 {
-    state = nullptr;
+    state =
+        nullptr;
 
-    recoveryMode = false;
+    recoveryMode =
+        false;
 
     for(uint8_t i = 0; i < MAX_TASKS; i++)
     {
-        resumed[i] = false;
+        resumed[i] =
+            false;
     }
 }
+
+
+//====================================================
+// Begin
+//====================================================
 
 void ResumeManager::begin(
     PersistentState* persistentState,
     bool recovery
 )
 {
-    state = persistentState;
+    state =
+        persistentState;
 
-    recoveryMode = recovery;
+    recoveryMode =
+        recovery;
 
-    for(uint8_t i = 0; i < MAX_TASKS; i++)
+
+    for(
+        uint8_t i = 0;
+        i < MAX_TASKS;
+        i++
+    )
     {
-        resumed[i] = false;
+        resumed[i] =
+            false;
+
+        recoveryTask[i] =
+            false;
     }
+
+
+    //--------------------------------------------------
+    // Capture recovery state
+    //--------------------------------------------------
+
+    if(
+        recoveryMode &&
+        state != nullptr
+    )
+    {
+        for(
+            uint8_t i = 0;
+            i < MAX_TASKS;
+            i++
+        )
+        {
+            recoveryTask[i] =
+                state->tasks[i].completed == false &&
+                state->tasks[i].progress > 0 &&
+                state->tasks[i].progress < 100;
+             if(
+                i == TASK_SENSOR
+            )
+            {
+                recoveryTask[i] =
+                    false;
+            }
+        }
+    }
+
+
+    Serial.print(
+        "[ResumeManager] Recovery mode: "
+    );
+
+    Serial.println(
+        recoveryMode
+            ? "ENABLED"
+            : "DISABLED"
+    );
 }
+
+
+//====================================================
+// Should resume
+//====================================================
 
 bool ResumeManager::shouldResume(
     TaskID taskId
 ) const
 {
-
-    if(state == nullptr)
+    if(
+        state == nullptr
+    )
     {
         return false;
     }
 
 
-    if(!recoveryMode)
+    if(
+        !recoveryMode
+    )
     {
         return false;
     }
 
 
-    if(taskId >= MAX_TASKS)
+    if(
+        taskId >= MAX_TASKS
+    )
     {
         return false;
     }
 
 
-    if(resumed[taskId])
+    if(
+        resumed[taskId]
+    )
     {
         return false;
     }
-
 
 
     return
-        state->tasks[taskId].completed == false &&
-        state->tasks[taskId].progress > 0 &&
-        state->tasks[taskId].progress < 100;
-
+        recoveryTask[taskId] &&
+        !state->tasks[taskId].completed;
 }
+
+
+//====================================================
+// Get resume checkpoint
+//====================================================
 
 uint8_t ResumeManager::getResumeCheckpoint(
     TaskID taskId
@@ -74,13 +153,21 @@ uint8_t ResumeManager::getResumeCheckpoint(
         return 0;
     }
 
+
     if(taskId >= MAX_TASKS)
     {
         return 0;
     }
 
-    return state->tasks[taskId].checkpoint;
+
+    return
+        state->tasks[taskId].checkpoint;
 }
+
+
+//====================================================
+// Get progress
+//====================================================
 
 uint8_t ResumeManager::getProgress(
     TaskID taskId
@@ -91,25 +178,58 @@ uint8_t ResumeManager::getProgress(
         return 0;
     }
 
+
     if(taskId >= MAX_TASKS)
     {
         return 0;
     }
 
-    return state->tasks[taskId].progress;
+
+    return
+        state->tasks[taskId].progress;
 }
+
+
+//====================================================
+// Mark resumed
+//====================================================
 
 void ResumeManager::markResumed(
     TaskID taskId
 )
 {
-    if(taskId >= MAX_TASKS)
+    if(
+        taskId >= MAX_TASKS
+    )
     {
         return;
     }
 
-    resumed[taskId] = true;
+
+    resumed[taskId] =
+        true;
+
+    recoveryTask[taskId] =
+        false;
+
+
+    Serial.print(
+        "[ResumeManager] Task "
+    );
+
+    Serial.print(
+        taskId
+    );
+
+    Serial.println(
+        " marked as resumed"
+    );
 }
+
+
+//====================================================
+// Was resumed
+//====================================================
 
 bool ResumeManager::wasResumed(
     TaskID taskId
@@ -120,14 +240,20 @@ bool ResumeManager::wasResumed(
         return false;
     }
 
-    return resumed[taskId];
+
+    return
+        resumed[taskId];
 }
+
+
+//====================================================
+// Finish task
+//====================================================
 
 void ResumeManager::finishTask(
     TaskID taskId
 )
 {
-
     if(state == nullptr)
     {
         return;
@@ -138,7 +264,6 @@ void ResumeManager::finishTask(
     {
         return;
     }
-
 
 
     state->tasks[taskId].checkpoint =
@@ -153,7 +278,6 @@ void ResumeManager::finishTask(
         true;
 
 
-
-    resumed[taskId] = false;
-
+    resumed[taskId] =
+        false;
 }

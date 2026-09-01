@@ -1,47 +1,55 @@
 #include "services/SensorService.h"
 
 
+//====================================================
+// Constructor
+//====================================================
 
 SensorService::SensorService()
 {
+    sensor =
+        nullptr;
 
-    sensor = nullptr;
+    buffer =
+        nullptr;
 
-    buffer = nullptr;
+    simulatedValue =
+        25.0;
 
-    failureManager = nullptr;
-
-    simulatedValue = 25.0;
-
+    persistentState =
+    nullptr;
 }
 
 
-
+//====================================================
+// Begin
+//====================================================
 
 void SensorService::begin(
     Sensor* sensorPtr,
     SensorBuffer* bufferPtr,
     ResumeManager* resumePtr,
     ExecutionCheckpoint* checkpointPtr,
-    FailureManager* failurePtr
+    FailureManager* failurePtr,
+    PersistentState* persistentStatePtr
 )
 {
+    sensor =
+        sensorPtr;
 
-    sensor = sensorPtr;
+    buffer =
+        bufferPtr;
 
-    buffer = bufferPtr;
-
-    failureManager = failurePtr;
-
+    persistentState =
+        persistentStatePtr;
 
     ResumableService::begin(
         resumePtr,
         checkpointPtr,
-        TASK_SENSOR
+        TASK_SENSOR,
+        failurePtr
     );
-
 }
-
 
 
 //====================================================
@@ -50,125 +58,139 @@ void SensorService::begin(
 
 void SensorService::executeNormal()
 {
-
-    if(sensor == nullptr)
-    {
-        return;
-    }
-
-
-
-    //--------------------------------------------------
-    // STEP 1
-    //--------------------------------------------------
-
-    updateCheckpoint(
-        STEP_SENSOR_READ,
-        25
-    );
-
-
-
-    if(!sensor->update())
-    {
-        return;
-    }
-
-
-
-    //--------------------------------------------------
-    // STEP 2
-    //--------------------------------------------------
-
-    updateCheckpoint(
-        STEP_SENSOR_PROCESS,
-        50
-    );
-
-
-
     if(
-        failureManager != nullptr &&
-        failureManager->hasFailure()
+        sensor == nullptr
     )
     {
-
-        Serial.println(
-            "[Sensor] Simulated interruption at 50%"
-        );
-
-
-        Serial.print(
-            "[DEBUG] Checkpoint: "
-        );
-
-
-        Serial.println(
-            getCheckpoint()
-        );
-
-
-        Serial.print(
-            "[DEBUG] Progress: "
-        );
-
-
-        Serial.println(
-            getProgress()
-        );
-
-
-
-        pauseExecution();
-
-
-
-        failureManager->clear();
-
-
-
         return;
-
     }
 
 
-
-    float value =
-        sensor->getValue();
-
-
+    uint8_t checkpoint =
+        getCheckpoint();
 
 
     //--------------------------------------------------
-    // STEP 3
+    // IDLE / COMPLETE
     //--------------------------------------------------
 
-    saveBuffer(
-        value
-    );
+    if(
+        checkpoint == STEP_IDLE ||
+        checkpoint == STEP_COMPLETE
+    )
+    {
+        updateCheckpoint(
+            STEP_SENSOR_READ,
+            25
+        );
+
+        return;
+    }
 
 
+    //--------------------------------------------------
+    // READ
+    //--------------------------------------------------
+
+    if(
+        checkpoint == STEP_SENSOR_READ
+    )
+    {
+        if(
+            !sensor->update()
+        )
+        {
+            return;
+        }
+
+
+        updateCheckpoint(
+            STEP_SENSOR_PROCESS,
+            50
+        );
+
+
+        return;
+    }
+
+
+    //--------------------------------------------------
+    // PROCESS
+    //--------------------------------------------------
+
+    if(
+        checkpoint == STEP_SENSOR_PROCESS
+    )
+    {
+        float value =
+            sensor->getValue();
+
+        if(
+            persistentState != nullptr
+        )
+        {
+            persistentState->lastSensorValue =
+                value;
+
+            persistentState->lastSensorTimestamp =
+                millis();
+        }
+
+        Serial.print(
+            "[Sensor] "
+        );
+
+        Serial.println(
+            value
+        );
+
+
+        updateCheckpoint(
+            STEP_SENSOR_BUFFER,
+            75
+        );
+
+
+        return;
+    }
+
+
+    //--------------------------------------------------
+    // BUFFER
+    //--------------------------------------------------
+
+    if(
+        checkpoint == STEP_SENSOR_BUFFER
+    )
+    {
+        float value =
+            sensor->getValue();
+
+
+        saveBuffer(
+            value
+        );
+
+
+        finishExecution();
+
+
+        return;
+    }
+
+
+    //--------------------------------------------------
+    // Invalid
+    //--------------------------------------------------
 
     Serial.print(
-        "[Sensor] "
+        "[Sensor] Invalid checkpoint: "
     );
-
 
     Serial.println(
-        value
+        checkpoint
     );
-
-
-
-    //--------------------------------------------------
-    // COMPLETE
-    //--------------------------------------------------
-
-    finishExecution();
-
 }
-
-
 
 
 //====================================================
@@ -177,154 +199,162 @@ void SensorService::executeNormal()
 
 void SensorService::executeResume()
 {
-
-    if(sensor == nullptr)
+    if(
+        sensor == nullptr
+    )
     {
         return;
     }
-
 
 
     uint8_t checkpoint =
         getCheckpoint();
 
 
-
     Serial.print(
         "[Sensor Resume] Checkpoint: "
     );
-
 
     Serial.println(
         checkpoint
     );
 
 
+    //--------------------------------------------------
+    // READ
+    //--------------------------------------------------
 
-    switch(checkpoint)
+    if(
+        checkpoint == STEP_SENSOR_READ
+    )
     {
-
-
-        case STEP_SENSOR_READ:
+        if(
+            !sensor->update()
+        )
         {
-
-            if(!sensor->update())
-            {
-                return;
-            }
-
-
-        }
-
-
-
-        case STEP_SENSOR_PROCESS:
-        {
-
-            updateCheckpoint(
-                STEP_SENSOR_PROCESS,
-                50
-            );
-
-
-            float value =
-                sensor->getValue();
-
-
-
-            saveBuffer(
-                value
-            );
-
-
-
-            Serial.print(
-                "[Resume Sensor] "
-            );
-
-
-            Serial.println(
-                value
-            );
-
-
-            break;
-
-        }
-
-
-
-        case STEP_SENSOR_BUFFER:
-        {
-
-            float value =
-                sensor->getValue();
-
-
-
-            saveBuffer(
-                value
-            );
-
-
-            break;
-
-        }
-
-
-
-        default:
-        {
-
-            Serial.println(
-                "[Sensor Resume] Invalid checkpoint"
-            );
-
-
             return;
-
         }
 
+
+        updateCheckpoint(
+            STEP_SENSOR_PROCESS,
+            50
+        );
+
+
+        return;
     }
 
 
+    //--------------------------------------------------
+    // PROCESS
+    //--------------------------------------------------
 
-    finishExecution();
+    if(
+        checkpoint == STEP_SENSOR_PROCESS
+    )
+    {
+        float value =
+            sensor->getValue();
 
+
+        Serial.print(
+            "[Sensor Resume] "
+        );
+
+        Serial.println(
+            value
+        );
+
+        if(
+            persistentState != nullptr
+        )
+        {
+            persistentState->lastSensorValue =
+                value;
+
+            persistentState->lastSensorTimestamp =
+                millis();
+        }
+
+        updateCheckpoint(
+            STEP_SENSOR_BUFFER,
+            75
+        );
+
+
+        return;
+    }
+
+
+    //--------------------------------------------------
+    // BUFFER
+    //--------------------------------------------------
+
+    if(
+        checkpoint == STEP_SENSOR_BUFFER
+    )
+    {
+        float value =
+            sensor->getValue();
+
+
+        saveBuffer(
+            value
+        );
+
+
+        finishExecution();
+
+
+        return;
+    }
+
+
+    //--------------------------------------------------
+    // Invalid
+    //--------------------------------------------------
+
+    Serial.print(
+        "[Sensor Resume] Invalid checkpoint: "
+    );
+
+    Serial.println(
+        checkpoint
+    );
 }
 
 
-
-
 //====================================================
-// Buffer
+// Save buffer
 //====================================================
 
 void SensorService::saveBuffer(
     float value
 )
 {
+    if(
+        buffer == nullptr
+    )
+    {
+        return;
+    }
 
-    updateCheckpoint(
-        STEP_SENSOR_BUFFER,
-        75
+
+    buffer->push(
+        value,
+        millis()
     );
 
 
+    Serial.print(
+        "[Sensor Buffer] Stored: "
+    );
 
-    if(buffer != nullptr)
-    {
-
-        buffer->push(
-            value,
-            millis()
-        );
-
-    }
-
+    Serial.println(
+        value
+    );
 }
-
-
 
 
 //====================================================
@@ -333,16 +363,17 @@ void SensorService::saveBuffer(
 
 void SensorService::executeSimulation()
 {
+    simulatedValue +=
+        0.25;
 
-    simulatedValue += 0.25;
 
-
-
-    if(simulatedValue > 30.0)
+    if(
+        simulatedValue > 30.0
+    )
     {
-        simulatedValue = 25.0;
+        simulatedValue =
+            25.0;
     }
-
 
 
     saveBuffer(
@@ -350,56 +381,53 @@ void SensorService::executeSimulation()
     );
 
 
-
     Serial.print(
         "[Simulation] "
     );
-
 
     Serial.println(
         simulatedValue
     );
 
 
-
     finishExecution();
-
 }
 
 
-
+//====================================================
+// Last value
+//====================================================
 
 float SensorService::getLastValue() const
 {
-
-    if(sensor == nullptr)
+    if(
+        sensor == nullptr
+    )
     {
         return 0.0;
     }
 
 
     return sensor->getValue();
-
 }
 
 
-
+//====================================================
+// Buffer status
+//====================================================
 
 void SensorService::printBufferStatus()
 {
-
-    if(buffer == nullptr)
+    if(
+        buffer == nullptr
+    )
     {
-
         Serial.println(
             "[Buffer] NOT ATTACHED"
         );
 
-
         return;
-
     }
-
 
 
     Serial.println();
@@ -413,7 +441,6 @@ void SensorService::printBufferStatus()
         "Samples Stored : "
     );
 
-
     Serial.println(
         buffer->getCount()
     );
@@ -422,5 +449,4 @@ void SensorService::printBufferStatus()
     Serial.println(
         "==================================="
     );
-
 }

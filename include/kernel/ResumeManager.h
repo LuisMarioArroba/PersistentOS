@@ -17,6 +17,9 @@ private:
 
     bool resumed[MAX_TASKS];
 
+    bool recoveryTask[MAX_TASKS];
+
+
 public:
 
     ResumeManager();

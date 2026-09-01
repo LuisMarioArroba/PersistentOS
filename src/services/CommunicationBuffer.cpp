@@ -26,16 +26,6 @@ void CommunicationBuffer::attach(
         return;
     }
 
-
-
-    /*
-        Inicialización solamente si
-        el buffer está vacío.
-
-        Esto permite recuperar
-        información después de un reboot.
-    */
-
     if(buffer->count == 0)
     {
 
@@ -46,9 +36,6 @@ void CommunicationBuffer::attach(
     }
 
 }
-
-
-
 
 
 bool CommunicationBuffer::push(
@@ -268,12 +255,22 @@ uint8_t CommunicationBuffer::capacity() const
 
 }
 
+uint32_t CommunicationBuffer::nextPacketID()
+{
+    if(
+        buffer == nullptr
+    )
+    {
+        return 0;
+    }
 
 
+    buffer->packetCounter++;
 
 
-
-
+    return
+        buffer->packetCounter;
+}
 
 void CommunicationBuffer::clear()
 {

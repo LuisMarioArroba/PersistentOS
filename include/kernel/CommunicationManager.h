@@ -4,36 +4,80 @@
 #include <Arduino.h>
 
 #include "kernel/CommunicationProtocol.h"
+#include "config/Config.h"
+#include "Config/Constants.h"
+
+#if USE_BLUETOOTH_COMMUNICATION
+#include <BluetoothSerial.h>
+#endif
 
 class CommunicationManager
 {
+private:
 
-public:
+    bool bluetoothConnected;
 
-    CommunicationManager();
+    //--------------------------------------------------
+    // Último intento de reconexión activa tras una caída
+    // del enlace (no el intento inicial de begin()/connect()
+    // del arranque, que es bloqueante y ya garantiza la
+    // primera conexión).
+    //--------------------------------------------------
 
-    bool begin();
-
-    bool send(
-        const uint8_t* data,
-        size_t length
-    );
-
-    bool isConnected() const;
-
-    CommunicationProtocol getProtocol() const;
+    uint32_t lastReconnectAttempt;
 
 private:
 
     CommunicationProtocol currentProtocol;
 
-private:
+
+    //--------------------------------------------------
+    // Line reassembly buffer
+    //
+    // Bluetooth SPP es un stream: los mensajes pueden
+    // llegar partidos en varias llamadas o varios
+    // mensajes pueden llegar juntos en una sola.
+    // Este buffer acumula bytes hasta encontrar el
+    // delimitador '\n' de un mensaje completo.
+    //--------------------------------------------------
+
+    char rxLineBuffer[MAX_LINE_SIZE];
+
+    size_t rxLineLength;
+
+
+    //--------------------------------------------------
+    // Bluetooth
+    //--------------------------------------------------
+/*
+    #if USE_BLUETOOTH_COMMUNICATION
+
+    BluetoothSerial bluetoothSerial;
+
+    #endif
+*/
+
+    //--------------------------------------------------
+    // Initialization
+    //--------------------------------------------------
 
     bool initializeSerial();
 
     bool initializeBluetooth();
 
     bool initializeWiFi();
+
+
+    //--------------------------------------------------
+    // Reconexión activa (post-arranque)
+    //--------------------------------------------------
+
+    void attemptReconnectBluetooth();
+
+
+    //--------------------------------------------------
+    // Send
+    //--------------------------------------------------
 
     bool sendSerial(
         const uint8_t* data,
@@ -46,6 +90,85 @@ private:
     );
 
     bool sendWiFi(
+        const uint8_t* data,
+        size_t length
+    );
+
+
+    //--------------------------------------------------
+    // Receive
+    //--------------------------------------------------
+
+    bool receiveBluetooth(
+        uint8_t* buffer,
+        size_t maxLength
+    );
+
+    bool receiveWiFi(
+        uint8_t* buffer,
+        size_t maxLength
+    );
+
+
+public:
+
+    CommunicationManager();
+
+    void updateConnectionState();
+
+    //--------------------------------------------------
+    // Initialization
+    //--------------------------------------------------
+
+    bool begin();
+
+
+    //--------------------------------------------------
+    // Protocol
+    //--------------------------------------------------
+
+    CommunicationProtocol getProtocol() const;
+
+
+    bool isConnected() const;
+    void printConnectionStatus();
+
+
+    //--------------------------------------------------
+    // Communication
+    //--------------------------------------------------
+
+    bool send(
+        const uint8_t* data,
+        size_t length
+    );
+
+
+    bool available();
+
+
+    size_t receive(
+        uint8_t* buffer,
+        size_t maxLength
+    );
+
+
+    //--------------------------------------------------
+    // Line-based receive (protocolo DATA/ACK)
+    //
+    // Extrae UN mensaje completo delimitado por '\n'
+    // (sin el '\n') si ya está disponible en el buffer
+    // interno. Devuelve false si todavía no hay un
+    // mensaje completo. Debe llamarse repetidamente
+    // (en loop) para drenar varios mensajes pendientes.
+    //--------------------------------------------------
+
+    bool receiveLine(
+        char* outBuffer,
+        size_t maxLength
+    );
+
+    bool sendPriority(
         const uint8_t* data,
         size_t length
     );

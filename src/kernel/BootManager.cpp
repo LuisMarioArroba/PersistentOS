@@ -2,30 +2,46 @@
 #include "kernel/ExecutionSteps.h"
 
 
+//====================================================
+// Constructor
+//====================================================
 
 BootManager::BootManager(
     FRAMManager& fram
 )
 :
-framManager(fram)
+    framManager(fram)
 {
-
-    recoveryDetected = false;
-
+    recoveryDetected =
+        false;
 }
 
 
-
+//====================================================
+// Begin
+//====================================================
 
 bool BootManager::begin()
 {
+    //--------------------------------------------------
+    // Initialize FRAM
+    //--------------------------------------------------
 
-    if(!framManager.begin())
+    if(
+        !framManager.begin()
+    )
     {
         return false;
     }
 
-    if(!framManager.isAvailable())
+
+    //--------------------------------------------------
+    // FRAM status
+    //--------------------------------------------------
+
+    if(
+        !framManager.isAvailable()
+    )
     {
         Serial.println(
             "[BOOT] FRAM not detected"
@@ -44,32 +60,36 @@ bool BootManager::begin()
 
 
     //--------------------------------------------------
-    // Recover previous state
+    // Try to recover previous state
     //--------------------------------------------------
 
-    if(framManager.load(state))
+    if(
+        framManager.load(state)
+    )
     {
+        recoveryDetected =
+            true;
 
-        recoveryDetected = true;
 
-
-        state.kernel.recovering = true;
+        state.kernel.recovering =
+            true;
 
 
         state.kernel.bootCount++;
 
-        state.kernel.persistentAvailable =framManager.isAvailable();
+
+        state.kernel.persistentAvailable =
+            framManager.isAvailable();
+
 
         Serial.println(
             "[BOOT] Previous state recovered"
         );
-
     }
     else
     {
-
         //--------------------------------------------------
-        // First execution
+        // Fresh startup
         //--------------------------------------------------
 
         memset(
@@ -79,16 +99,24 @@ bool BootManager::begin()
         );
 
 
-        state.kernel.bootCount = 1;
+        state.kernel.bootCount =
+            1;
 
 
-        state.kernel.recovering = false;
+        state.kernel.recovering =
+            false;
 
-        state.kernel.persistentAvailable = framManager.isAvailable();
 
-        for(uint8_t i = 0; i < MAX_TASKS; i++)
+        state.kernel.persistentAvailable =
+            framManager.isAvailable();
+
+
+        for(
+            uint8_t i = 0;
+            i < MAX_TASKS;
+            i++
+        )
         {
-
             state.tasks[i].id =
                 static_cast<TaskID>(i);
 
@@ -97,88 +125,105 @@ bool BootManager::begin()
                 STEP_IDLE;
 
 
-            state.tasks[i].progress = 0;
+            state.tasks[i].progress =
+                0;
 
 
-            state.tasks[i].completed = false;
-
+            state.tasks[i].completed =
+                false;
         }
-
 
 
         Serial.println(
             "[BOOT] Fresh startup"
         );
-
     }
 
 
+    //--------------------------------------------------
+    // Boot information
+    //--------------------------------------------------
 
     Serial.print(
         "[BOOT] Count: "
     );
-
 
     Serial.println(
         state.kernel.bootCount
     );
 
 
+    Serial.print(
+        "[BOOT] Recovery: "
+    );
+
+    Serial.println(
+        recoveryDetected
+            ? "YES"
+            : "NO"
+    );
+
 
     //--------------------------------------------------
-    // Persist current state
+    // Save current state
     //--------------------------------------------------
 
-    if(framManager.isAvailable())
+    if(
+        framManager.isAvailable()
+    )
     {
-        framManager.save(state);
+        state.kernel.recovering =
+            false;
+
+        framManager.save(
+            state
+        );
+    }
+    else
+    {
+        state.kernel.recovering =
+            false;
     }
 
 
+    //--------------------------------------------------
+    // Boot recovery flag is only valid during boot
+    //--------------------------------------------------
 
-    /*
-       No limpiar:
-       
-       checkpoint
-       progress
-       completed
-
-       porque ResumeManager depende
-       de estos valores.
-    */
-
-
-    state.kernel.recovering = false;
-
+    state.kernel.recovering =
+        false;
 
 
     return true;
-
 }
 
 
-
+//====================================================
+// Was recovery
+//====================================================
 
 bool BootManager::wasRecovery()
 {
-
     return recoveryDetected;
-
 }
 
 
-
+//====================================================
+// Get state
+//====================================================
 
 PersistentState& BootManager::getState()
 {
-
     return state;
-
 }
+
+
+//====================================================
+// Persistent memory
+//====================================================
 
 bool BootManager::hasPersistentMemory()
 {
-
-    return framManager.isAvailable();
-
+    return
+        framManager.isAvailable();
 }

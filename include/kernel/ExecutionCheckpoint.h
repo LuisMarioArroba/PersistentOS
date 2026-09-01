@@ -5,6 +5,9 @@
 
 #include "kernel/PersistentState.h"
 #include "kernel/TaskID.h"
+#include "kernel/FRAMManager.h"
+#include "kernel/ExecutionSteps.h"
+
 
 class ExecutionCheckpoint
 {
@@ -13,17 +16,28 @@ private:
 
     PersistentState* state;
 
+    FRAMManager* framManager;
+
+
 public:
 
     ExecutionCheckpoint();
+
 
     void attachState(
         PersistentState* persistentState
     );
 
+
+    void attachFRAM(
+        FRAMManager* framPtr
+    );
+
+
     void startTask(
         TaskID taskId
     );
+
 
     void update(
         TaskID taskId,
@@ -31,12 +45,14 @@ public:
         uint8_t progress
     );
 
+
     uint8_t getCheckpoint(
-        TaskID  taskId
+        TaskID taskId
     ) const;
 
+
     uint8_t getProgress(
-        TaskID  taskId
+        TaskID taskId
     ) const;
 
 };

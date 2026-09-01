@@ -31,7 +31,7 @@ private:
 
     float simulatedValue;
 
-
+    PersistentState* persistentState;
 
 private:
 
@@ -52,7 +52,8 @@ public:
         SensorBuffer* bufferPtr,
         ResumeManager* resumePtr,
         ExecutionCheckpoint* checkpointPtr,
-        FailureManager* failurePtr
+        FailureManager* failurePtr,
+        PersistentState* persistentStatePtr
     );
 
 

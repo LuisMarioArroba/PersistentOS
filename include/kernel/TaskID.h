@@ -15,6 +15,8 @@ enum TaskID
 
     TASK_DISPLAY,
 
+    //STEP_IDLE,
+
     TASK_ALERT,
 
     TASK_STORAGE
