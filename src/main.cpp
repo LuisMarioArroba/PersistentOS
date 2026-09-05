@@ -88,6 +88,18 @@ EnergyManager energyManager;
 
 EnergyPredictionManager energyPredictionManager;
 
+//--------------------------------------------------
+// Predicción del lado remoto: se alimenta con la
+// energía que el nodo remoto reporta en cada DATA
+// recibido (ver CommunicationService::handleIncomingData),
+// para poder estimar --- junto con energyPredictionManager,
+// el lado local --- una ventana de comunicación
+// probabilística sin conocer el comportamiento real
+// de la fuente de alimentación de ninguno de los dos.
+//--------------------------------------------------
+
+EnergyPredictionManager remoteEnergyPrediction;
+
 SimulationManager simulationManager;
 
 AlarmManager alarmManager;
@@ -157,7 +169,7 @@ void setup()
     simulationManager.begin();
 
     alarmManager.begin(
-        &communicationManager
+        &communicationService
     );
 
 
@@ -277,6 +289,7 @@ void setup()
         100.0
     );
     energyPredictionManager.begin();
+    remoteEnergyPrediction.begin();
     behaviorManager.begin();
 
     //--------------------------------------------------
@@ -317,7 +330,15 @@ void setup()
 
         &failureManager,
 
-        &bootManager.getState()
+        &bootManager.getState(),
+
+        &energyManager,
+
+        &energyPredictionManager,
+
+        &remoteEnergyPrediction,
+
+        &behaviorManager
 
     );
 
@@ -457,13 +478,15 @@ void loop()
 
 
     //--------------------------------------------------
-    // 2. Alarm
+    // 2. Alarm: umbral de temperatura (Config.h),
+    // prioridad sobre la telemetría de rutina vía
+    // CommunicationService::requestAlarm().
     //--------------------------------------------------
-/*
+
     alarmManager.execute(
-        sensorManager.getTemperature()
+        sensorManager.getValue(),
+        sensorManager.isConnected()
     );
-*/
 
     //--------------------------------------------------
     // 3. Communication state
@@ -486,19 +509,15 @@ void loop()
     testManager.execute();
 
     //--------------------------------------------------
-    // 6. Energy Prediction
-    //--------------------------------------------------
-    energyPredictionManager.update();
-
-    //--------------------------------------------------
-    // 7. Simulation
+    // 6. Simulation
     //--------------------------------------------------
 
     simulationManager.execute();
 
 
     //--------------------------------------------------
-    // 8. Energy
+    // 7. Energy (local, alimenta energyPredictionManager
+    // para la ventana de comunicación del lado local)
     //--------------------------------------------------
 
     energyManager.execute();
@@ -506,14 +525,6 @@ void loop()
     energyPredictionManager.observe(
         energyManager.getEnergy()
     );
-
-    energyManager.execute();
-
-
-    energyPredictionManager.observe(
-        energyManager.getEnergy()
-    );
-
 
     energyPredictionManager.update();
 

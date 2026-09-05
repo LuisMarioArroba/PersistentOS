@@ -1,5 +1,7 @@
 #include <Arduino.h>
 
+#include <esp_system.h>
+
 #include "config/Config.h"
 
 
@@ -95,6 +97,14 @@ EnergyManager energyManager;
 
 EnergyPredictionManager energyPredictionManager;
 
+//--------------------------------------------------
+// Predicción del lado remoto (ver main.cpp): se
+// alimenta con la energía que el nodo remoto reporta
+// en cada DATA recibido.
+//--------------------------------------------------
+
+EnergyPredictionManager remoteEnergyPrediction;
+
 SimulationManager simulationManager;
 
 AlarmManager alarmManager;
@@ -132,6 +142,13 @@ TestManager testManager;
 
 namespace
 {
+
+    //--------------------------------------------------
+    // Forward declaration: definida más abajo.
+    //--------------------------------------------------
+
+    void toggleAutoScenario();
+
 
     struct ScenarioTag
     {
@@ -206,6 +223,11 @@ namespace
         );
 
         Serial.println(
+            "[REPORT] r -> activar/desactivar ciclo automático "
+            "(aleatorio, 1/4/5/6/7 cada 20s)"
+        );
+
+        Serial.println(
             "[REPORT] ================================="
         );
 
@@ -252,6 +274,21 @@ namespace
         }
 
 
+        if(
+            peeked == 'r' ||
+            peeked == 'R'
+        )
+        {
+
+            Serial.read();
+
+            toggleAutoScenario();
+
+            return;
+
+        }
+
+
         for(
             uint8_t i = 0;
             i < 7;
@@ -290,6 +327,151 @@ namespace
 
     const uint32_t ENERGY_LOG_INTERVAL_MS =
         2000;
+
+    //--------------------------------------------------
+    // Ciclo automático de escenarios (opcional, tecla
+    // 'r'/'R' para activar/desactivar). Aleatorio puro:
+    // en cada ciclo se sortea uno de los escenarios
+    // automatizables, pudiendo repetirse seguido.
+    //
+    // Solo cubre los 5 escenarios que TestManager puede
+    // disparar por software (1, 4, 5, 6, 7). Los
+    // escenarios 2 (nodo remoto apagado) y 3 (confirmación
+    // demorada) dependen de una acción física real -- el
+    // interruptor de energía del tercer equipo, o la
+    // ausencia real de conexión -- y se siguen tageando a
+    // mano con 'b'/'c' mientras se provocan.
+    //--------------------------------------------------
+
+    struct AutoScenarioEntry
+    {
+        TestScenario testScenario;
+        uint8_t reportId;
+        const char* reportName;
+    };
+
+    const AutoScenarioEntry AUTO_SCENARIOS[5] =
+    {
+        { TEST_NORMAL,        1, "NORMAL" },
+        { TEST_FAIL_WAIT_ACK, 4, "CUT_WAIT_ACK" },
+        { TEST_FAIL_SEND,     5, "CUT_BEFORE_SEND" },
+        { TEST_FAIL_CREATE,   6, "CUT_AFTER_CREATE" },
+        { TEST_FAIL_CONFIRM,  7, "CUT_RECEIVER_ACK_LOST" }
+    };
+
+    bool autoScenarioEnabled =
+        false;
+
+    uint32_t lastAutoScenarioMillis =
+        0;
+
+    const uint32_t AUTO_SCENARIO_INTERVAL_MS =
+        20000;
+
+
+    void toggleAutoScenario()
+    {
+
+        autoScenarioEnabled =
+            !autoScenarioEnabled;
+
+        Serial.print(
+            "[REPORT] Ciclo automático de escenarios: "
+        );
+
+        Serial.println(
+            autoScenarioEnabled ? "ACTIVADO" : "DESACTIVADO"
+        );
+
+        if(
+            autoScenarioEnabled
+        )
+        {
+
+            //--------------------------------------------------
+            // Forzar el primer sorteo de inmediato en vez de
+            // esperar el intervalo completo.
+            //--------------------------------------------------
+
+            lastAutoScenarioMillis =
+                millis() - AUTO_SCENARIO_INTERVAL_MS;
+
+        }
+
+    }
+
+
+    void runAutoScenarioIfDue()
+    {
+
+        if(
+            !autoScenarioEnabled
+        )
+        {
+
+            return;
+
+        }
+
+
+        uint32_t now =
+            millis();
+
+        if(
+            now - lastAutoScenarioMillis < AUTO_SCENARIO_INTERVAL_MS
+        )
+        {
+
+            return;
+
+        }
+
+        lastAutoScenarioMillis =
+            now;
+
+
+        uint8_t index =
+            (uint8_t) random(0, 5);
+
+        const AutoScenarioEntry& chosen =
+            AUTO_SCENARIOS[index];
+
+
+        Serial.println();
+
+        Serial.print(
+            "[REPORT] Auto-escenario sorteado: "
+        );
+
+        Serial.print(
+            chosen.reportId
+        );
+
+        Serial.print(
+            ". "
+        );
+
+        Serial.println(
+            chosen.reportName
+        );
+
+
+        testManager.forceScenario(
+            chosen.testScenario
+        );
+
+        ReportLogger::setScenario(
+            chosen.reportId,
+            chosen.reportName
+        );
+
+    }
+
+
+    //--------------------------------------------------
+    // Log periódico de energía/comportamiento para la
+    // gráfica de trazas de energía local/remota.
+    //--------------------------------------------------
 
     void logEnergyIfDue()
     {
@@ -335,6 +517,18 @@ void setup()
     );
 
 
+    //--------------------------------------------------
+    // Semilla del generador aleatorio (ciclo automático
+    // de escenarios) con el RNG por hardware del ESP32,
+    // no con millis() -- que en el arranque siempre
+    // ronda el mismo valor.
+    //--------------------------------------------------
+
+    randomSeed(
+        esp_random()
+    );
+
+
     pinMode(
         LED_PIN,
         OUTPUT
@@ -377,7 +571,7 @@ void setup()
     simulationManager.begin();
 
     alarmManager.begin(
-        &communicationManager
+        &communicationService
     );
 
 
@@ -496,7 +690,15 @@ void setup()
 
         &failureManager,
 
-        &bootManager.getState()
+        &bootManager.getState(),
+
+        &energyManager,
+
+        &energyPredictionManager,
+
+        &remoteEnergyPrediction,
+
+        &behaviorManager
 
     );
 
@@ -643,6 +845,8 @@ void loop()
 
     processReportSerial();
 
+    runAutoScenarioIfDue();
+
 
     //--------------------------------------------------
     // 1. Sensor
@@ -652,40 +856,52 @@ void loop()
 
 
     //--------------------------------------------------
-    // 2. Communication state
+    // 2. Alarm: umbral de temperatura (Config.h),
+    // prioridad sobre la telemetría de rutina vía
+    // CommunicationService::requestAlarm().
+    //--------------------------------------------------
+
+    alarmManager.execute(
+        sensorManager.getValue(),
+        sensorManager.isConnected()
+    );
+
+
+    //--------------------------------------------------
+    // 3. Communication state
     //--------------------------------------------------
 
     communicationManager.updateConnectionState();
 
 
     //--------------------------------------------------
-    // 3. Communication
+    // 4. Communication
     //--------------------------------------------------
 
     communicationService.execute();
 
 
     //--------------------------------------------------
-    // 4. Failure tests (botón físico + menú de energía
+    // 5. Failure tests (botón físico + menú de energía
     //    sintética de TestManager, teclas '1'-'4'/'s'/'m')
     //--------------------------------------------------
 
     testManager.execute();
 
     //--------------------------------------------------
-    // 5. Energy prediction
+    // 6. Energy prediction
     //--------------------------------------------------
 
     energyPredictionManager.update();
 
     //--------------------------------------------------
-    // 6. Simulation
+    // 7. Simulation
     //--------------------------------------------------
 
     simulationManager.execute();
 
     //--------------------------------------------------
-    // 7. Energy
+    // 8. Energy
     //--------------------------------------------------
 
     energyManager.execute();
@@ -698,7 +914,7 @@ void loop()
 
 
     //--------------------------------------------------
-    // 8. Report: traza periódica de energía
+    // 9. Report: traza periódica de energía
     //--------------------------------------------------
 
     logEnergyIfDue();

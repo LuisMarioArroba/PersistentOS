@@ -11,6 +11,23 @@
 #include "Config/Constants.h"
 
 
+//--------------------------------------------------
+// Tipo de mensaje sobre el mismo protocolo DATA/ACK.
+// Un paquete ALARM se crea y envía exactamente igual
+// que uno DATA (mismo checkpoint, mismo ACK), solo
+// cambia el prefijo de línea en el cable ("ALARM|" en
+// vez de "DATA|") y que CommunicationService lo crea
+// antes que cualquier telemetría de rutina pendiente.
+//--------------------------------------------------
+
+enum PacketKind : uint8_t
+{
+    PACKET_KIND_DATA = 0,
+
+    PACKET_KIND_ALARM
+};
+
+
 
 struct CommunicationPacket
 {
@@ -81,6 +98,13 @@ struct CommunicationPacket
     //--------------------------------------------------
 
     uint8_t checkpoint;
+
+
+    //--------------------------------------------------
+    // Message kind (DATA / ALARM)
+    //--------------------------------------------------
+
+    PacketKind kind;
 
 
 };

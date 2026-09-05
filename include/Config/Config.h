@@ -63,10 +63,80 @@
 // reintenta indefinidamente hasta tener éxito.
 #define BLUETOOTH_INIT_RETRY_DELAY_MS  1000
 
-// Nombre del nodo receptor al que PersistentOS1 se conecta como
-// maestro Bluetooth (SPP). PersistentOS2 se queda como esclavo,
-// esperando esa conexión.
-#define BLUETOOTH_REMOTE_DEVICE_NAME   "PersistentOS2"
+//====================================================
+// Rol y peers por nodo (mismo firmware/kernel para
+// todos, parametrizado por PERSISTENT_OS_NODE_ID en
+// tiempo de compilación).
+//
+// - PRIMARY es obligatorio: el nodo no funciona sin
+//   poder enlazarse con él.
+// - SECONDARY es opcional: el nodo intenta encontrarlo
+//   periódicamente, pero si no aparece, sigue
+//   funcionando normalmente con el primary.
+//
+// Node 1 y Node 3 son maestros (buscan y se conectan
+// activamente a su primary); Node 2 es esclavo (espera
+// a que Node 1 lo conecte). Node 3 no es "solo un
+// esclavo" -- tiene la misma capacidad de iniciativa
+// que Node 1, solo que apunta a un primary distinto.
+//====================================================
+
+#if PERSISTENT_OS_NODE_ID == 1
+
+    #define BLUETOOTH_PRIMARY_IS_MASTER    true
+
+    #define BLUETOOTH_REMOTE_DEVICE_NAME   "PersistentOS2"
+
+    #ifndef BLUETOOTH_SECONDARY_DEVICE_NAME
+        #define BLUETOOTH_SECONDARY_DEVICE_NAME "PersistentOS3"
+    #endif
+
+#elif PERSISTENT_OS_NODE_ID == 3
+
+    // Igual de capaz que Node 1: maestro hacia su propio
+    // primary, con Node 1 como secondary opcional.
+    #define BLUETOOTH_PRIMARY_IS_MASTER    true
+
+    #define BLUETOOTH_REMOTE_DEVICE_NAME   "PersistentOS2"
+
+    #ifndef BLUETOOTH_SECONDARY_DEVICE_NAME
+        #define BLUETOOTH_SECONDARY_DEVICE_NAME "PersistentOS1"
+    #endif
+
+#else
+
+    // Node 2: esclavo hacia su primary (Node 1), con
+    // Node 3 como secondary opcional.
+    #define BLUETOOTH_PRIMARY_IS_MASTER    false
+
+    #define BLUETOOTH_REMOTE_DEVICE_NAME   "PersistentOS1"
+
+    #ifndef BLUETOOTH_SECONDARY_DEVICE_NAME
+        #define BLUETOOTH_SECONDARY_DEVICE_NAME "PersistentOS3"
+    #endif
+
+#endif
+
+// Vacío = deshabilitado. Por defecto está ACTIVO para
+// los tres nodos: cada uno busca periódicamente a su
+// secondary aunque no exista físicamente, y si no lo
+// encuentra vuelve de inmediato al primary obligatorio
+// -- ver pollPeerRotation() en CommunicationManager.cpp.
+// Se puede desactivar con -DBLUETOOTH_SECONDARY_DEVICE_NAME='""'
+// como build_flag si se necesita para una campaña
+// experimental que no quiera esas desconexiones periódicas.
+
+// Cuánto tiempo se queda conectado al primary antes de
+// intentar encontrar al secondary (si está habilitado).
+#ifndef BLUETOOTH_PRIMARY_WINDOW_MS
+    #define BLUETOOTH_PRIMARY_WINDOW_MS        30000
+#endif
+
+// Cuánto tiempo se queda conectado al secondary (si lo
+// encuentra) antes de volver al primary.
+#ifndef BLUETOOTH_SECONDARY_WINDOW_MS
+    #define BLUETOOTH_SECONDARY_WINDOW_MS      15000
+#endif
 
 // Tiempo de espera entre reintentos de conexión (connect()) al
 // nodo remoto cuando la búsqueda/conexión falla. Se reintenta
@@ -134,10 +204,47 @@ Alarm Configuration
 ======================================================
 */
 
-#define ALARM_TEMPERATURE_MIN          10.0f
-#define ALARM_TEMPERATURE_MAX          40.0f
+// Umbrales de alerta de temperatura: por debajo de MIN o por
+// encima de MAX se dispara una alarma de prioridad.
+#define ALARM_TEMPERATURE_MIN          20.0f
+#define ALARM_TEMPERATURE_MAX          35.0f
 
 #define ALARM_PRIORITY                 255
+
+
+/*
+======================================================
+Communication window (predicción de periodos de
+comunicación)
+======================================================
+
+Ningún nodo conoce el comportamiento real de su fuente
+de alimentación (el tercer equipo que la controla), así
+que esta estimación se apoya únicamente en los valores
+de energía observados: el propio (EnergyManager) y el
+del nodo remoto (recibido en cada DATA/ACK). No es una
+predicción exacta, es un heurístico probabilístico de
+primera aproximación.
+*/
+
+// Por debajo de este nivel, un nodo se considera "bajo
+// de energía" para efectos de decidir si conviene
+// intentar una comunicación de rutina.
+#define COMM_MIN_FAVORABLE_ENERGY       25.0f
+
+// Cambio mínimo entre muestras consecutivas (mismas
+// unidades que EnergyPredictionManager::trendThreshold)
+// para considerar que la energía está cayendo de forma
+// sostenida, no solo con ruido.
+#define COMM_TREND_FALLING_THRESHOLD    0.10f
+
+// PersistentOS2: simulación local de energía (software),
+// independiente del interruptor físico del tercer equipo.
+// Le permite reportar su propio valor de energía como
+// PersistentOS1, en lugar de un valor de prueba fijo.
+#define NODE2_ENERGY_CONSUMPTION_PER_CYCLE   0.4f
+#define NODE2_ENERGY_RECOVERY_AMOUNT         0.6f
+#define NODE2_ENERGY_SIM_INTERVAL_MS         500
 
 
 #endif

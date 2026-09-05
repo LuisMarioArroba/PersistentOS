@@ -5,7 +5,7 @@
 #include <Arduino.h>
 
 
-class CommunicationManager;
+class CommunicationService;
 
 
 enum AlarmType
@@ -31,8 +31,17 @@ class AlarmManager
 
 private:
 
-    CommunicationManager*
-        communicationManager;
+    //--------------------------------------------------
+    // Las alarmas viajan por el mismo pipeline
+    // checkpointeado DATA/ACK que la telemetría de
+    // rutina (vía requestAlarm()), en vez de escribirse
+    // directo al puerto: así también quedan protegidas
+    // por reintento e idempotencia ante un corte de
+    // energía a mitad de envío.
+    //--------------------------------------------------
+
+    CommunicationService*
+        communicationService;
 
 
     AlarmType currentAlarm;
@@ -62,13 +71,15 @@ public:
 
 
     void begin(
-        CommunicationManager*
-            communicationPtr
+        CommunicationService*
+            communicationServicePtr
     );
 
 
     void execute(
-        float temperature
+        float temperature,
+
+        bool sensorValid
     );
 
 

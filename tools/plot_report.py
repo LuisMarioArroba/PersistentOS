@@ -14,8 +14,11 @@ y genera:
     y tasa de confirmación por escenario (out/summary.csv)
 
 Uso:
-    pio device monitor -e persistentos1_reporte | tee run.log
+    python3 tools/capture_report.py <puerto>   # activa 'r' solo y escribe run.log en vivo
     python3 tools/plot_report.py run.log
+
+    (alternativa manual, sin activar el ciclo automático:
+     pio device monitor -e persistentos1_reporte | tee run.log)
 """
 
 import sys

@@ -101,6 +101,18 @@ public:
     void execute();
 
 
+    //--------------------------------------------------
+    // Fuerza un escenario específico (no el siguiente en
+    // orden), para automatizar el ciclo de pruebas desde
+    // fuera (ver main_prueba_reporte.cpp) en vez de
+    // depender únicamente del botón físico.
+    //--------------------------------------------------
+
+    void forceScenario(
+        TestScenario scenario
+    );
+
+
 
 private:
 

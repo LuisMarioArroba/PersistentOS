@@ -1,6 +1,6 @@
 #include "services/AlarmManager.h"
 
-#include "kernel/CommunicationManager.h"
+#include "services/CommunicationService.h"
 
 #include "config/Config.h"
 
@@ -12,7 +12,7 @@
 AlarmManager::AlarmManager()
 {
 
-    communicationManager =
+    communicationService =
         nullptr;
 
 
@@ -35,13 +35,13 @@ AlarmManager::AlarmManager()
 //====================================================
 
 void AlarmManager::begin(
-    CommunicationManager*
-        communicationPtr
+    CommunicationService*
+        communicationServicePtr
 )
 {
 
-    communicationManager =
-        communicationPtr;
+    communicationService =
+        communicationServicePtr;
 
 
     currentAlarm =
@@ -64,9 +64,38 @@ void AlarmManager::begin(
 //====================================================
 
 void AlarmManager::execute(
-    float temperature
+    float temperature,
+
+    bool sensorValid
 )
 {
+
+    //--------------------------------------------------
+    // Sin sensor conectado no hay nada que evaluar: un
+    // valor inválido (p.ej. 0.0 por defecto) no debe
+    // interpretarse como una temperatura real y disparar
+    // una alarma falsa. El nodo sigue comunicando de
+    // todas formas, solo no participa en las alarmas.
+    //--------------------------------------------------
+
+    if(
+        !sensorValid
+    )
+    {
+
+        if(
+            alarmActive
+        )
+        {
+
+            clearAlarm();
+
+        }
+
+        return;
+
+    }
+
 
     lastTemperature =
         temperature;
@@ -241,7 +270,7 @@ void AlarmManager::sendAlarm()
 {
 
     if(
-        communicationManager ==
+        communicationService ==
         nullptr
     )
     {
@@ -253,6 +282,9 @@ void AlarmManager::sendAlarm()
 
     char message[64];
 
+    bool isLow =
+        false;
+
 
     if(
         currentAlarm ==
@@ -260,10 +292,14 @@ void AlarmManager::sendAlarm()
     )
     {
 
+        isLow =
+            true;
+
         snprintf(
             message,
             sizeof(message),
-            "ALARM:TEMP_LOW:%.2f",
+            "NODE:%d|ALARM:TEMP_LOW:%.2f",
+            (int) PERSISTENT_OS_NODE_ID,
             lastTemperature
         );
 
@@ -280,7 +316,8 @@ void AlarmManager::sendAlarm()
             snprintf(
                 message,
                 sizeof(message),
-                "ALARM:TEMP_HIGH:%.2f",
+                "NODE:%d|ALARM:TEMP_HIGH:%.2f",
+                (int) PERSISTENT_OS_NODE_ID,
                 lastTemperature
             );
 
@@ -295,12 +332,59 @@ void AlarmManager::sendAlarm()
     }
 
 
-    communicationManager->sendPriority(
-        (
-            const uint8_t*
-        )message,
-        strlen(message)
+    //--------------------------------------------------
+    // Mismo formato de mensaje que se imprime al recibir
+    // una alarma ajena (CommunicationService::handleIncomingData),
+    // para que se vea igual sin importar si la alarma es
+    // propia o de otro nodo.
+    //--------------------------------------------------
+
+    Serial.println();
+
+    Serial.println(
+        "[ALARM] ==============================="
     );
+
+    Serial.print(
+        "[ALARM] Nodo "
+    );
+
+    Serial.print(
+        (int) PERSISTENT_OS_NODE_ID
+    );
+
+    Serial.print(
+        " presento la alarma de temperatura "
+    );
+
+    Serial.print(
+        isLow ? "baja " : "alta "
+    );
+
+    Serial.print(
+        lastTemperature
+    );
+
+    Serial.println(
+        " C"
+    );
+
+    Serial.println(
+        "[ALARM] ==============================="
+    );
+
+
+    if(
+        communicationService != nullptr
+    )
+    {
+
+        communicationService->requestAlarm(
+            message,
+            (uint16_t) strlen(message)
+        );
+
+    }
 
 }
 

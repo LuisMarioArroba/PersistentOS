@@ -96,10 +96,37 @@ void SensorService::executeNormal()
         checkpoint == STEP_SENSOR_READ
     )
     {
+        //--------------------------------------------------
+        // Sin hardware de sensor en absoluto (p.ej.
+        // PersistentOS2 sin DS18B20 todavía): no tiene
+        // sentido reintentar update() por siempre, eso
+        // dejaría el checkpoint bloqueado en READ y el
+        // nodo nunca terminaría este servicio. Se avanza
+        // igual, marcando el valor como inválido.
+        //--------------------------------------------------
+
+        if(
+            !sensor->isConnected()
+        )
+        {
+            updateCheckpoint(
+                STEP_SENSOR_PROCESS,
+                50
+            );
+
+            return;
+        }
+
+
         if(
             !sensor->update()
         )
         {
+            //--------------------------------------------------
+            // Sensor presente pero la lectura de este ciclo
+            // falló (transitorio): sí vale la pena reintentar.
+            //--------------------------------------------------
+
             return;
         }
 
@@ -125,6 +152,9 @@ void SensorService::executeNormal()
         float value =
             sensor->getValue();
 
+        bool valid =
+            sensor->isConnected();
+
         if(
             persistentState != nullptr
         )
@@ -132,17 +162,31 @@ void SensorService::executeNormal()
             persistentState->lastSensorValue =
                 value;
 
+            persistentState->lastSensorValid =
+                valid;
+
             persistentState->lastSensorTimestamp =
                 millis();
         }
 
-        Serial.print(
-            "[Sensor] "
-        );
+        if(
+            valid
+        )
+        {
+            Serial.print(
+                "[Sensor] "
+            );
 
-        Serial.println(
-            value
-        );
+            Serial.println(
+                value
+            );
+        }
+        else
+        {
+            Serial.println(
+                "[Sensor] Not connected - reporting as invalid, node keeps communicating"
+            );
+        }
 
 
         updateCheckpoint(
@@ -229,6 +273,19 @@ void SensorService::executeResume()
     )
     {
         if(
+            !sensor->isConnected()
+        )
+        {
+            updateCheckpoint(
+                STEP_SENSOR_PROCESS,
+                50
+            );
+
+            return;
+        }
+
+
+        if(
             !sensor->update()
         )
         {
@@ -257,14 +314,28 @@ void SensorService::executeResume()
         float value =
             sensor->getValue();
 
+        bool valid =
+            sensor->isConnected();
 
-        Serial.print(
-            "[Sensor Resume] "
-        );
 
-        Serial.println(
-            value
-        );
+        if(
+            valid
+        )
+        {
+            Serial.print(
+                "[Sensor Resume] "
+            );
+
+            Serial.println(
+                value
+            );
+        }
+        else
+        {
+            Serial.println(
+                "[Sensor Resume] Not connected - reporting as invalid"
+            );
+        }
 
         if(
             persistentState != nullptr
@@ -272,6 +343,9 @@ void SensorService::executeResume()
         {
             persistentState->lastSensorValue =
                 value;
+
+            persistentState->lastSensorValid =
+                valid;
 
             persistentState->lastSensorTimestamp =
                 millis();

@@ -2,6 +2,8 @@
 #include "config/Config.h"
 #include "report/ReportLogger.h"
 
+#include <string.h>
+
 #if USE_BLUETOOTH_COMMUNICATION
 #include <BluetoothSerial.h>
 #endif
@@ -35,6 +37,10 @@ bluetoothConnected =
 lastReconnectAttempt =
     0;
 rxLineLength =
+    0;
+activePeerSlot =
+    PeerSlot::PRIMARY;
+peerSlotStartTime =
     0;
 
 
@@ -517,8 +523,9 @@ while(
     result =
         bluetoothSerial.begin(
             BLUETOOTH_DEVICE_NAME,
-            true    // isMaster: este nodo busca y se conecta,
-                    // no espera pasivamente a un cliente.
+            BLUETOOTH_PRIMARY_IS_MASTER    // maestro: busca y se
+                                            // conecta. Esclavo: se
+                                            // anuncia y espera.
         );
 
     if(
@@ -556,8 +563,10 @@ Serial.println(
 );
 
 
+#if BLUETOOTH_PRIMARY_IS_MASTER
+
 //--------------------------------------------------
-// Búsqueda/conexión activa al nodo remoto (maestro).
+// Rol maestro: búsqueda/conexión activa al primary.
 // connect() hace descubrimiento SDP por nombre y
 // bloquea unos segundos por intento; se reintenta
 // indefinidamente hasta lograr la conexión real,
@@ -628,6 +637,34 @@ Serial.print(
 Serial.println(
     BLUETOOTH_REMOTE_DEVICE_NAME
 );
+
+#else
+
+//--------------------------------------------------
+// Rol esclavo: no se llama connect(), solo se queda
+// anunciándose. BluetoothSerial en este modo acepta a
+// CUALQUIER maestro que lo encuentre por nombre -- no
+// solo al configurado como "primary" en Config.h. La
+// identidad real de quien se conectó se descubre después,
+// a nivel de aplicación, por el campo NODE:<id> de cada
+// mensaje (ver CommunicationService::handleIncomingData),
+// no aquí. "primary" solo documenta la relación esperada
+// por defecto, no restringe quién puede enlazarse.
+//--------------------------------------------------
+
+Serial.print(
+    "[COMM] Advertising as "
+);
+
+Serial.print(
+    BLUETOOTH_DEVICE_NAME
+);
+
+Serial.println(
+    ", waiting for any master to connect..."
+);
+
+#endif
 
 
 return true;
@@ -1295,8 +1332,11 @@ void CommunicationManager::updateConnectionState()
     // desde su lado.
     //--------------------------------------------------
 
+#if BLUETOOTH_PRIMARY_IS_MASTER
+
     if(
-        !connected
+        !connected &&
+        activePeerSlot == PeerSlot::PRIMARY
     )
     {
 
@@ -1316,6 +1356,16 @@ void CommunicationManager::updateConnectionState()
         }
 
     }
+
+#endif
+
+
+    //--------------------------------------------------
+    // Rotación al peer secundario opcional. No-op si
+    // BLUETOOTH_SECONDARY_DEVICE_NAME está vacío.
+    //--------------------------------------------------
+
+    pollPeerRotation();
 
 #endif
 
@@ -1376,6 +1426,231 @@ void CommunicationManager::attemptReconnectBluetooth()
         Serial.println(
             "[COMM BT] Reconnect attempt failed, will retry"
         );
+
+    }
+
+#endif
+
+}
+
+
+//====================================================
+// Peer rotation (secondary opcional)
+//====================================================
+//
+// No es una "cadena" simultánea (BluetoothSerial clásico
+// solo sostiene una sesión SPP a la vez): es una rotación
+// -- se desconecta del primary, intenta UNA vez encontrar
+// al secondary, y si lo logra se queda comunicando con él
+// un rato antes de volver al primary. Si no lo encuentra,
+// vuelve al primary de inmediato. El resto del sistema
+// (CommunicationService) no distingue con quién está
+// hablando: solo usa lo que esté conectado en bluetoothSerial
+// en cada momento.
+//====================================================
+
+void CommunicationManager::pollPeerRotation()
+{
+
+#if USE_BLUETOOTH_COMMUNICATION
+
+    if(
+        strlen(BLUETOOTH_SECONDARY_DEVICE_NAME) == 0
+    )
+    {
+        //--------------------------------------------------
+        // Deshabilitado (comportamiento por defecto sin un
+        // tercer nodo real): no toca nada del enlace hacia
+        // el primary.
+        //--------------------------------------------------
+
+        return;
+    }
+
+
+    uint32_t now =
+        millis();
+
+
+    if(
+        activePeerSlot == PeerSlot::PRIMARY
+    )
+    {
+        //--------------------------------------------------
+        // Solo tiene sentido rotar lejos del primary si
+        // realmente está conectado a él ahora mismo; si
+        // todavía lo está buscando, no hay nada de qué
+        // "salir".
+        //--------------------------------------------------
+
+        if(
+            !bluetoothConnected
+        )
+        {
+            peerSlotStartTime =
+                now;
+
+            return;
+        }
+
+
+        if(
+            now - peerSlotStartTime < BLUETOOTH_PRIMARY_WINDOW_MS
+        )
+        {
+            return;
+        }
+
+
+        Serial.print(
+            "[COMM BT] Leaving primary, searching for optional secondary: "
+        );
+
+        Serial.println(
+            BLUETOOTH_SECONDARY_DEVICE_NAME
+        );
+
+        bluetoothSerial.disconnect();
+
+
+#if !BLUETOOTH_PRIMARY_IS_MASTER
+
+        //--------------------------------------------------
+        // Un nodo esclavo hacia su primary necesita
+        // volverse maestro temporalmente para poder marcar
+        // al secondary (nadie más lo va a llamar por él).
+        //--------------------------------------------------
+
+        bluetoothSerial.end();
+
+        bluetoothSerial.begin(
+            BLUETOOTH_DEVICE_NAME,
+            true
+        );
+
+#endif
+
+
+        bool found =
+            bluetoothSerial.connect(
+                BLUETOOTH_SECONDARY_DEVICE_NAME
+            );
+
+
+        if(
+            found
+        )
+        {
+
+            Serial.print(
+                "[COMM BT] Connected to secondary: "
+            );
+
+            Serial.println(
+                BLUETOOTH_SECONDARY_DEVICE_NAME
+            );
+
+            ReportLogger::event(
+                "BT_SECONDARY_CONNECTED",
+                0,
+                0
+            );
+
+            activePeerSlot =
+                PeerSlot::SECONDARY;
+
+            bluetoothConnected =
+                true;
+
+            peerSlotStartTime =
+                now;
+
+            return;
+
+        }
+
+
+        Serial.println(
+            "[COMM BT] Secondary not found, returning to primary"
+        );
+
+
+#if !BLUETOOTH_PRIMARY_IS_MASTER
+
+        bluetoothSerial.end();
+
+        bluetoothSerial.begin(
+            BLUETOOTH_DEVICE_NAME,
+            false
+        );
+
+#endif
+
+
+        activePeerSlot =
+            PeerSlot::PRIMARY;
+
+        bluetoothConnected =
+            false;
+
+        peerSlotStartTime =
+            now;
+
+
+        //--------------------------------------------------
+        // Rol maestro: forzar un reintento inmediato hacia
+        // el primary en el próximo tick, en vez de esperar
+        // el cooldown normal de reconexión.
+        //--------------------------------------------------
+
+        lastReconnectAttempt =
+            0;
+
+        return;
+
+    }
+
+
+    //--------------------------------------------------
+    // activePeerSlot == SECONDARY
+    //--------------------------------------------------
+
+    if(
+        !bluetoothConnected ||
+        now - peerSlotStartTime >= BLUETOOTH_SECONDARY_WINDOW_MS
+    )
+    {
+
+        Serial.println(
+            "[COMM BT] Leaving secondary, returning to primary"
+        );
+
+        bluetoothSerial.disconnect();
+
+
+#if !BLUETOOTH_PRIMARY_IS_MASTER
+
+        bluetoothSerial.end();
+
+        bluetoothSerial.begin(
+            BLUETOOTH_DEVICE_NAME,
+            false
+        );
+
+#endif
+
+
+        activePeerSlot =
+            PeerSlot::PRIMARY;
+
+        bluetoothConnected =
+            false;
+
+        peerSlotStartTime =
+            now;
+
+        lastReconnectAttempt =
+            0;
 
     }
 

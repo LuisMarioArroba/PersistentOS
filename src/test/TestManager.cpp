@@ -391,6 +391,56 @@ bool TestManager::buttonPressed()
 
 
 //====================================================
+// Force scenario (automatización externa)
+//====================================================
+
+void TestManager::forceScenario(
+    TestScenario scenario
+)
+{
+
+    currentScenario =
+        scenario;
+
+
+    failureInjected =
+        false;
+
+
+    if(
+        failureManager != nullptr
+    )
+    {
+
+        failureManager->clear();
+
+    }
+
+
+    if(
+        checkpointManager != nullptr
+    )
+    {
+
+        checkpointManager->update(
+
+            TASK_COMMUNICATION,
+
+            STEP_IDLE,
+
+            0
+
+        );
+
+    }
+
+
+    printScenario();
+
+}
+
+
+//====================================================
 // Next scenario
 //====================================================
 

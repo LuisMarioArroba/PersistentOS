@@ -26,6 +26,26 @@ private:
 
     uint32_t lastReconnectAttempt;
 
+
+    //--------------------------------------------------
+    // Rotación al peer secundario opcional (Config.h:
+    // BLUETOOTH_SECONDARY_DEVICE_NAME). Deshabilitada
+    // por completo si ese nombre está vacío: en ese caso
+    // no se toca nada del comportamiento existente hacia
+    // el primary.
+    //--------------------------------------------------
+
+    enum class PeerSlot : uint8_t
+    {
+        PRIMARY = 0,
+
+        SECONDARY
+    };
+
+    PeerSlot activePeerSlot;
+
+    uint32_t peerSlotStartTime;
+
 private:
 
     CommunicationProtocol currentProtocol;
@@ -73,6 +93,16 @@ private:
     //--------------------------------------------------
 
     void attemptReconnectBluetooth();
+
+
+    //--------------------------------------------------
+    // Rotación al peer secundario opcional. Se llama en
+    // cada tick desde updateConnectionState(); es un
+    // no-op si BLUETOOTH_SECONDARY_DEVICE_NAME está
+    // vacío.
+    //--------------------------------------------------
+
+    void pollPeerRotation();
 
 
     //--------------------------------------------------

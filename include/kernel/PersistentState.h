@@ -83,6 +83,17 @@ struct PersistentState
     float pendingSensorValue;
     float lastSensorValue;
     uint32_t lastSensorTimestamp;
+
+    //--------------------------------------------------
+    // false si el último intento de lectura encontró el
+    // sensor desconectado (p.ej. PersistentOS2 sin
+    // DS18B20 todavía). El nodo sigue comunicando de
+    // todas formas; lastSensorValue simplemente no debe
+    // interpretarse como una temperatura real ni
+    // evaluarse contra los umbrales de alarma.
+    //--------------------------------------------------
+
+    bool lastSensorValid;
 };
 
 #endif

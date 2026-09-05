@@ -96,6 +96,66 @@ bool CommunicationBuffer::push(
 
 
 
+bool CommunicationBuffer::pushPriority(
+    const CommunicationPacket& packet
+)
+{
+
+    if(buffer == nullptr)
+    {
+        return false;
+    }
+
+
+
+    if(full())
+    {
+        return false;
+    }
+
+
+
+    //--------------------------------------------------
+    // Inserta en la posición "tail", en vez de "head"
+    // como push(): la próxima llamada a front()/pop()
+    // devuelve este paquete antes que cualquier otro ya
+    // en cola, sin alterar el orden relativo del resto.
+    //--------------------------------------------------
+
+    if(
+        buffer->tail == 0
+    )
+    {
+
+        buffer->tail =
+            COMMUNICATION_BUFFER_SIZE - 1;
+
+    }
+    else
+    {
+
+        buffer->tail--;
+
+    }
+
+
+
+    buffer->packets[
+        buffer->tail
+    ] = packet;
+
+
+
+    buffer->count++;
+
+
+
+    return true;
+
+}
+
+
+
 bool CommunicationBuffer::pop()
 {
 

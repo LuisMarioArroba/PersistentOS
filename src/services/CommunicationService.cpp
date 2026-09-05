@@ -20,11 +20,52 @@ CommunicationService::CommunicationService()
     sensorService =
         nullptr;
 
+    energyManager =
+        nullptr;
+
+    localEnergyPrediction =
+        nullptr;
+
+    remoteEnergyPrediction =
+        nullptr;
+
+    behaviorManager =
+        nullptr;
+
     receivedCount =
         0;
 
     receivedNextSlot =
         0;
+
+    alarmPending =
+        false;
+
+    alarmPayloadLength =
+        0;
+
+    for(
+        uint8_t i = 0;
+        i < MAX_KNOWN_NODES;
+        i++
+    )
+    {
+        knownNodes[i].nodeId = 0;
+        knownNodes[i].temperature = 0.0f;
+        knownNodes[i].valid = false;
+        knownNodes[i].lastSeen = 0;
+    }
+
+    for(
+        uint8_t i = 0;
+        i < MAX_RELAYED_ALARMS;
+        i++
+    )
+    {
+        relayedAlarms[i].originNodeId = 0;
+        relayedAlarms[i].alarmType = 0;
+        relayedAlarms[i].timestamp = 0;
+    }
 }
 
 
@@ -39,7 +80,11 @@ void CommunicationService::begin(
     ExecutionCheckpoint* checkpointPtr,
     SensorService* sensorPtr,
     FailureManager* failurePtr,
-    PersistentState* persistentStatePtr
+    PersistentState* persistentStatePtr,
+    EnergyManager* energyManagerPtr,
+    EnergyPredictionManager* localEnergyPredictionPtr,
+    EnergyPredictionManager* remoteEnergyPredictionPtr,
+    BehaviorManager* behaviorManagerPtr
 )
 {
     buffer =
@@ -53,6 +98,18 @@ void CommunicationService::begin(
 
     persistentState =
         persistentStatePtr;
+
+    energyManager =
+        energyManagerPtr;
+
+    localEnergyPrediction =
+        localEnergyPredictionPtr;
+
+    remoteEnergyPrediction =
+        remoteEnergyPredictionPtr;
+
+    behaviorManager =
+        behaviorManagerPtr;
 
     ResumableService::begin(
         resumePtr,
@@ -122,7 +179,19 @@ void CommunicationService::executeNormal()
         checkpoint == STEP_COMMUNICATION_CREATE
     )
     {
-        createPacket();
+        if(
+            !createPacket()
+        )
+        {
+            //--------------------------------------------------
+            // No hay alarma pendiente y la ventana de energía
+            // no es favorable: se queda en CREATE y lo vuelve
+            // a intentar en el siguiente tick, sin bloquear el
+            // resto del sistema.
+            //--------------------------------------------------
+
+            return;
+        }
 
 
         Serial.println(
@@ -397,7 +466,18 @@ void CommunicationService::executeResume()
         );
 
 
-        createPacket();
+        if(
+            !createPacket()
+        )
+        {
+            //--------------------------------------------------
+            // Igual que en executeNormal(): sin alarma pendiente
+            // y con ventana desfavorable, se queda en CREATE y
+            // lo reintenta en el siguiente tick.
+            //--------------------------------------------------
+
+            return;
+        }
 
 
         updateCheckpoint(
@@ -675,7 +755,7 @@ void CommunicationService::executeResume()
 // Create packet
 //====================================================
 
-void CommunicationService::createPacket()
+bool CommunicationService::createPacket()
 {
     CommunicationPacket packet;
 
@@ -712,6 +792,80 @@ void CommunicationService::createPacket()
         STEP_COMMUNICATION_CREATE;
 
 
+    //--------------------------------------------------
+    // Alarma pendiente: tiene prioridad sobre cualquier
+    // telemetría de rutina y se crea sin pasar por la
+    // ventana de comunicación favorable (una alarma se
+    // intenta siempre, de inmediato).
+    //--------------------------------------------------
+
+    if(
+        alarmPending
+    )
+    {
+        packet.kind =
+            PACKET_KIND_ALARM;
+
+        packet.length =
+            alarmPayloadLength;
+
+        memcpy(
+            packet.payload,
+            alarmPayload,
+            alarmPayloadLength
+        );
+
+        alarmPending =
+            false;
+
+        ReportLogger::event(
+            "CREATE_ALARM",
+            packet.packetID,
+            0
+        );
+
+        buffer->push(
+            packet
+        );
+
+        Serial.print(
+            "[COMM] PRIORITY alarm packet created ID: "
+        );
+
+        Serial.println(
+            packet.packetID
+        );
+
+        Serial.print(
+            "[COMM] Payload: "
+        );
+
+        Serial.write(
+            (const uint8_t*) alarmPayload,
+            alarmPayloadLength
+        );
+
+        Serial.println();
+
+        return true;
+    }
+
+
+    //--------------------------------------------------
+    // Telemetría de rutina: se detiene si la ventana de
+    // comunicación no es favorable en este momento, en
+    // vez de insistir gastando energía en un intento con
+    // pocas probabilidades de completarse.
+    //--------------------------------------------------
+
+    if(
+        !isCommunicationWindowFavorable()
+    )
+    {
+        return false;
+    }
+
+
     ReportLogger::event(
         "CREATE",
         packet.packetID,
@@ -726,29 +880,95 @@ void CommunicationService::createPacket()
     float value =
     0.0;
 
+    bool sensorValid =
+        false;
+
     if(
         persistentState != nullptr
     )
     {
         value =
             persistentState->lastSensorValue;
+
+        sensorValid =
+            persistentState->lastSensorValid;
+    }
+
+
+    float localEnergy =
+        0.0f;
+
+    if(
+        energyManager != nullptr
+    )
+    {
+        localEnergy =
+            energyManager->getEnergy();
     }
 
 
     //--------------------------------------------------
-    // Create message
+    // Actualizar la propia entrada en la tabla de nodos
+    // conocidos antes de anunciarla.
     //--------------------------------------------------
 
-    char message[32];
-
-
-    snprintf(
-        message,
-        sizeof(message),
-        "TEMP: %.2f",
-        value
+    updateKnownNode(
+        (uint8_t) PERSISTENT_OS_NODE_ID,
+        value,
+        sensorValid
     );
 
+
+    //--------------------------------------------------
+    // Create message: identidad de este nodo, temperatura
+    // (o "NA" si el sensor no está conectado, p.ej.
+    // PersistentOS2 sin DS18B20 todavía), energía local, y
+    // un resumen de la última temperatura conocida de los
+    // demás nodos (propio + recibida transitivamente), para
+    // que la información se propague en cada salto y no
+    // solo entre pares directos.
+    //--------------------------------------------------
+
+    char knownSummary[32];
+
+    buildKnownSummary(
+        knownSummary,
+        sizeof(knownSummary)
+    );
+
+
+    char message[MAX_PACKET_SIZE];
+
+
+    if(
+        sensorValid
+    )
+    {
+        snprintf(
+            message,
+            sizeof(message),
+            "NODE:%d|TEMP:%.2f|ENERGY:%.2f|K:%s",
+            (int) PERSISTENT_OS_NODE_ID,
+            value,
+            localEnergy,
+            knownSummary
+        );
+    }
+    else
+    {
+        snprintf(
+            message,
+            sizeof(message),
+            "NODE:%d|TEMP:NA|ENERGY:%.2f|K:%s",
+            (int) PERSISTENT_OS_NODE_ID,
+            localEnergy,
+            knownSummary
+        );
+    }
+
+
+    packet.kind =
+        PACKET_KIND_DATA;
 
     packet.length =
         strlen(message);
@@ -786,6 +1006,9 @@ void CommunicationService::createPacket()
     Serial.println(
         message
     );
+
+
+    return true;
 }
 
 
@@ -855,16 +1078,24 @@ bool CommunicationService::sendPacket(
 
     //--------------------------------------------------
     // Build protocol frame: DATA|<packetID>|<payload>\n
+    // o ALARM|<packetID>|<payload>\n según packet->kind.
     //--------------------------------------------------
 
     char frame[MAX_LINE_SIZE];
+
+
+    const char* prefixTag =
+        (packet->kind == PACKET_KIND_ALARM)
+            ? "ALARM"
+            : "DATA";
 
 
     int prefixWritten =
         snprintf(
             frame,
             sizeof(frame),
-            "DATA|%lu|",
+            "%s|%lu|",
+            prefixTag,
             (unsigned long) packet->packetID
         );
 
@@ -875,7 +1106,7 @@ bool CommunicationService::sendPacket(
     )
     {
         Serial.println(
-            "[COMM] Failed to build DATA frame (prefix)"
+            "[COMM] Failed to build protocol frame (prefix)"
         );
 
         packet->ackStatus =
@@ -1179,7 +1410,30 @@ void CommunicationService::pollIncoming()
         )
         {
             handleIncomingData(
-                line
+                line,
+                false
+            );
+
+            continue;
+        }
+
+
+        //--------------------------------------------------
+        // ALARM|<packetID>|<payload>  -> alerta de prioridad
+        // del nodo remoto (mismo protocolo, mismo ACK).
+        //--------------------------------------------------
+
+        if(
+            strncmp(
+                line,
+                "ALARM|",
+                6
+            ) == 0
+        )
+        {
+            handleIncomingData(
+                line,
+                true
             );
 
             continue;
@@ -1229,11 +1483,14 @@ void CommunicationService::pollIncoming()
 //====================================================
 
 void CommunicationService::handleIncomingData(
-    char* line
+    char* line,
+
+    bool isAlarm
 )
 {
     char* idStart =
-        line + 5;
+        line +
+        (isAlarm ? 6 : 5);
 
     char* separator =
         strchr(
@@ -1246,7 +1503,7 @@ void CommunicationService::handleIncomingData(
     )
     {
         Serial.println(
-            "[COMM RX] Malformed DATA message (missing payload separator)"
+            "[COMM RX] Malformed message (missing payload separator)"
         );
 
         return;
@@ -1273,37 +1530,320 @@ void CommunicationService::handleIncomingData(
         Serial.println(
             "[COMM RX] Duplicate packet - re-sending ACK without reprocessing"
         );
-    }
-    else
-    {
-        //--------------------------------------------------
-        // Por ahora solo se registra en el log. Cuando el
-        // comportamiento de energía esté implementado en
-        // ambos nodos, este es el punto donde se debería
-        // integrar el dato remoto (FRAM / EnergyManager /
-        // EnergyPredictionManager, según corresponda).
-        //--------------------------------------------------
 
-        Serial.print(
-            "[COMM RX] Remote data (packet "
-        );
-
-        Serial.print(
+        sendAckFor(
             packetId
         );
 
+        return;
+    }
+
+
+    //--------------------------------------------------
+    // Identidad del remitente: NODE:<id> siempre va al
+    // principio del payload, tanto en DATA como en ALARM.
+    //--------------------------------------------------
+
+    uint8_t senderNodeId =
+        0;
+
+    const char* nodeTag =
+        strstr(
+            payload,
+            "NODE:"
+        );
+
+    if(
+        nodeTag != nullptr
+    )
+    {
+        senderNodeId =
+            (uint8_t) strtoul(
+                nodeTag + 5,
+                nullptr,
+                10
+            );
+    }
+
+
+    if(
+        isAlarm
+    )
+    {
+        //--------------------------------------------------
+        // Formato: NODE:<id>|ALARM:TEMP_LOW:<valor>  o
+        //          NODE:<id>|ALARM:TEMP_HIGH:<valor>
+        //--------------------------------------------------
+
+        uint8_t alarmType =
+            0;
+
+        float alarmTemperature =
+            0.0f;
+
+        const char* lowTag =
+            strstr(
+                payload,
+                "ALARM:TEMP_LOW:"
+            );
+
+        const char* highTag =
+            strstr(
+                payload,
+                "ALARM:TEMP_HIGH:"
+            );
+
+        if(
+            lowTag != nullptr
+        )
+        {
+            alarmType = 1;
+
+            alarmTemperature =
+                strtof(
+                    lowTag + 16,
+                    nullptr
+                );
+        }
+        else if(
+            highTag != nullptr
+        )
+        {
+            alarmType = 2;
+
+            alarmTemperature =
+                strtof(
+                    highTag + 17,
+                    nullptr
+                );
+        }
+
+
+        Serial.println();
+
+        Serial.println(
+            "[ALARM] ==============================="
+        );
+
         Serial.print(
-            "): "
+            "[ALARM] Nodo "
+        );
+
+        Serial.print(
+            senderNodeId
+        );
+
+        Serial.print(
+            " presento la alarma de temperatura "
+        );
+
+        Serial.print(
+            alarmType == 1 ? "baja " : "alta "
+        );
+
+        Serial.print(
+            alarmTemperature
         );
 
         Serial.println(
-            payload
+            " C"
         );
+
+        Serial.println(
+            "[ALARM] ==============================="
+        );
+
+
+        if(
+            senderNodeId != 0
+        )
+        {
+            updateKnownNode(
+                senderNodeId,
+                alarmTemperature,
+                true
+            );
+        }
+
+
+        //--------------------------------------------------
+        // Relevo: si la alarma es de OTRO nodo (no de este
+        // mismo) y todavía no se reenvió, se vuelve a
+        // encolar como prioritaria para que llegue al
+        // siguiente salto (primary o secondary), en vez de
+        // quedarse solo en este par directo.
+        //--------------------------------------------------
+
+        if(
+            senderNodeId != 0 &&
+            senderNodeId != (uint8_t) PERSISTENT_OS_NODE_ID &&
+            alarmType != 0 &&
+            !wasAlreadyRelayed(senderNodeId, alarmType)
+        )
+        {
+            rememberRelayed(
+                senderNodeId,
+                alarmType
+            );
+
+            Serial.println(
+                "[ALARM] Relevando hacia el siguiente salto"
+            );
+
+            requestAlarm(
+                payload,
+                (uint16_t) strlen(payload)
+            );
+        }
+
 
         rememberReceived(
             packetId
         );
+
+        sendAckFor(
+            packetId
+        );
+
+        return;
     }
+
+
+    Serial.print(
+        "[COMM RX] Remote data (packet "
+    );
+
+    Serial.print(
+        packetId
+    );
+
+    Serial.print(
+        "): "
+    );
+
+    Serial.println(
+        payload
+    );
+
+
+    //--------------------------------------------------
+    // Extraer TEMP:<valor> (o NA) del remitente directo y
+    // actualizar su entrada en la tabla de nodos conocidos.
+    //--------------------------------------------------
+
+    if(
+        senderNodeId != 0
+    )
+    {
+        const char* tempTag =
+            strstr(
+                payload,
+                "TEMP:"
+            );
+
+        if(
+            tempTag != nullptr &&
+            strncmp(
+                tempTag + 5,
+                "NA",
+                2
+            ) != 0
+        )
+        {
+            updateKnownNode(
+                senderNodeId,
+                strtof(
+                    tempTag + 5,
+                    nullptr
+                ),
+                true
+            );
+        }
+        else
+        {
+            updateKnownNode(
+                senderNodeId,
+                0.0f,
+                false
+            );
+        }
+    }
+
+
+    //--------------------------------------------------
+    // Fusionar el resumen K:<id>:<temp>,... con lo que este
+    // nodo ya sabe -- así la información de un tercer nodo
+    // llega aunque nunca se haya conectado directamente con
+    // él, siempre que algún salto la haya traído.
+    //--------------------------------------------------
+
+    const char* knownTag =
+        strstr(
+            payload,
+            "K:"
+        );
+
+    if(
+        knownTag != nullptr
+    )
+    {
+        parseKnownSummary(
+            knownTag + 2
+        );
+    }
+
+
+    //--------------------------------------------------
+    // Extraer ENERGY:<valor> del payload (si viene) y
+    // alimentar la predicción del lado remoto y el
+    // clasificador de comportamiento con el par
+    // (energía local, energía remota). Ninguno de los
+    // dos nodos conoce el perfil real que el tercer
+    // equipo aplica: esto solo usa lo observado.
+    //--------------------------------------------------
+
+    const char* energyTag =
+        strstr(
+            payload,
+            "ENERGY:"
+        );
+
+    if(
+        energyTag != nullptr
+    )
+    {
+        float remoteEnergy =
+            strtof(
+                energyTag + 7,
+                nullptr
+            );
+
+        if(
+            remoteEnergyPrediction != nullptr
+        )
+        {
+            remoteEnergyPrediction->observe(
+                remoteEnergy
+            );
+        }
+
+        if(
+            behaviorManager != nullptr &&
+            energyManager != nullptr
+        )
+        {
+            behaviorManager->observe(
+                energyManager->getEnergy(),
+                remoteEnergy,
+                millis()
+            );
+        }
+    }
+
+
+    rememberReceived(
+        packetId
+    );
 
 
     sendAckFor(
@@ -1473,4 +2013,564 @@ void CommunicationService::rememberReceived(
     {
         receivedCount++;
     }
+}
+
+
+//====================================================
+// Predicción de ventana de comunicación
+//====================================================
+//
+// Ni este nodo ni el remoto conocen el comportamiento
+// real de su fuente de alimentación (el tercer equipo
+// que la controla); esta función solo mira lo que cada
+// uno observó: la energía local propia y la última
+// energía remota conocida, junto con su tendencia
+// reciente. No es una predicción exacta del intervalo,
+// es un heurístico probabilístico de primera
+// aproximación, tal como se documenta en el paper.
+//====================================================
+
+bool CommunicationService::isCommunicationWindowFavorable()
+{
+    //--------------------------------------------------
+    // Sin alguno de los dos predictores no hay base para
+    // decidir: se deja pasar en vez de bloquear el envío.
+    //--------------------------------------------------
+
+    if(
+        energyManager == nullptr ||
+        localEnergyPrediction == nullptr ||
+        remoteEnergyPrediction == nullptr
+    )
+    {
+        return true;
+    }
+
+
+    float localValue =
+        energyManager->getEnergy();
+
+    float localTrend =
+        localEnergyPrediction->getTrend();
+
+    bool localLow =
+        localValue < COMM_MIN_FAVORABLE_ENERGY;
+
+    bool localFalling =
+        localTrend < -COMM_TREND_FALLING_THRESHOLD;
+
+    if(
+        localLow &&
+        localFalling
+    )
+    {
+        Serial.print(
+            "[COMM] Window unfavorable: local energy low and falling ("
+        );
+
+        Serial.print(
+            localValue
+        );
+
+        Serial.println(
+            "%)"
+        );
+
+        return false;
+    }
+
+
+    //--------------------------------------------------
+    // Sin observaciones remotas todavía (arranque, o el
+    // otro nodo nunca ha enviado nada): no hay nada que
+    // evaluar del lado remoto, se deja pasar.
+    //--------------------------------------------------
+
+    if(
+        remoteEnergyPrediction->getSampleCount() == 0
+    )
+    {
+        return true;
+    }
+
+
+    float remoteValue =
+        remoteEnergyPrediction->getCurrentValue();
+
+    float remoteTrend =
+        remoteEnergyPrediction->getTrend();
+
+    bool remoteLow =
+        remoteValue < COMM_MIN_FAVORABLE_ENERGY;
+
+    bool remoteFalling =
+        remoteTrend < -COMM_TREND_FALLING_THRESHOLD;
+
+    if(
+        remoteLow &&
+        remoteFalling
+    )
+    {
+        Serial.print(
+            "[COMM] Window unfavorable: last known remote energy low and falling ("
+        );
+
+        Serial.print(
+            remoteValue
+        );
+
+        Serial.println(
+            "%)"
+        );
+
+        return false;
+    }
+
+
+    return true;
+}
+
+
+//====================================================
+// Solicitud de alarma (desde AlarmManager)
+//====================================================
+
+void CommunicationService::requestAlarm(
+    const char* payload,
+    uint16_t length
+)
+{
+    if(
+        payload == nullptr
+    )
+    {
+        return;
+    }
+
+
+    if(
+        length >= sizeof(alarmPayload)
+    )
+    {
+        length =
+            sizeof(alarmPayload) - 1;
+    }
+
+
+    memcpy(
+        alarmPayload,
+        payload,
+        length
+    );
+
+
+    alarmPayloadLength =
+        length;
+
+    alarmPending =
+        true;
+
+
+    Serial.print(
+        "[COMM] Alarm requested, will be created next: "
+    );
+
+    Serial.write(
+        (const uint8_t*) alarmPayload,
+        alarmPayloadLength
+    );
+
+    Serial.println();
+}
+
+
+//====================================================
+// Tabla de nodos conocidos
+//====================================================
+
+void CommunicationService::updateKnownNode(
+    uint8_t nodeId,
+    float temperature,
+    bool valid
+)
+{
+    if(
+        nodeId == 0
+    )
+    {
+        return;
+    }
+
+
+    int8_t freeSlot =
+        -1;
+
+    for(
+        uint8_t i = 0;
+        i < MAX_KNOWN_NODES;
+        i++
+    )
+    {
+        if(
+            knownNodes[i].nodeId == nodeId
+        )
+        {
+            knownNodes[i].temperature = temperature;
+            knownNodes[i].valid = valid;
+            knownNodes[i].lastSeen = millis();
+
+            return;
+        }
+
+        if(
+            freeSlot < 0 &&
+            knownNodes[i].nodeId == 0
+        )
+        {
+            freeSlot = (int8_t) i;
+        }
+    }
+
+
+    if(
+        freeSlot >= 0
+    )
+    {
+        knownNodes[freeSlot].nodeId = nodeId;
+        knownNodes[freeSlot].temperature = temperature;
+        knownNodes[freeSlot].valid = valid;
+        knownNodes[freeSlot].lastSeen = millis();
+
+        Serial.print(
+            "[NODES] Nodo "
+        );
+
+        Serial.print(
+            nodeId
+        );
+
+        Serial.println(
+            " agregado a la tabla de nodos conocidos"
+        );
+    }
+
+    //--------------------------------------------------
+    // Tabla llena y nodo desconocido: se descarta en
+    // silencio -- MAX_KNOWN_NODES ya cubre la topología
+    // de este trabajo (hasta 3 nodos).
+    //--------------------------------------------------
+}
+
+
+void CommunicationService::buildKnownSummary(
+    char* buffer,
+    size_t bufferSize
+)
+{
+    if(
+        buffer == nullptr ||
+        bufferSize == 0
+    )
+    {
+        return;
+    }
+
+    buffer[0] = '\0';
+
+    size_t used = 0;
+
+    bool first = true;
+
+    for(
+        uint8_t i = 0;
+        i < MAX_KNOWN_NODES;
+        i++
+    )
+    {
+        if(
+            knownNodes[i].nodeId == 0 ||
+            knownNodes[i].nodeId == (uint8_t) PERSISTENT_OS_NODE_ID
+        )
+        {
+            //--------------------------------------------------
+            // Slot vacío, o la propia entrada (ya va en el
+            // campo NODE:/TEMP: principal del mensaje, no
+            // hace falta repetirla en el resumen).
+            //--------------------------------------------------
+
+            continue;
+        }
+
+        char entry[16];
+
+        if(
+            knownNodes[i].valid
+        )
+        {
+            snprintf(
+                entry,
+                sizeof(entry),
+                "%d:%.1f",
+                knownNodes[i].nodeId,
+                knownNodes[i].temperature
+            );
+        }
+        else
+        {
+            snprintf(
+                entry,
+                sizeof(entry),
+                "%d:NA",
+                knownNodes[i].nodeId
+            );
+        }
+
+        size_t entryLen =
+            strlen(entry);
+
+        //--------------------------------------------------
+        // +1 por la coma separadora si no es la primera.
+        //--------------------------------------------------
+
+        size_t needed =
+            entryLen + (first ? 0 : 1);
+
+        if(
+            used + needed >= bufferSize
+        )
+        {
+            //--------------------------------------------------
+            // No entra más en el presupuesto de payload; se
+            // corta el resumen aquí en vez de desbordar.
+            //--------------------------------------------------
+
+            break;
+        }
+
+        if(
+            !first
+        )
+        {
+            buffer[used] = ',';
+            used++;
+            buffer[used] = '\0';
+        }
+
+        strcat(
+            buffer,
+            entry
+        );
+
+        used += entryLen;
+
+        first = false;
+    }
+}
+
+
+void CommunicationService::parseKnownSummary(
+    const char* summary
+)
+{
+    if(
+        summary == nullptr
+    )
+    {
+        return;
+    }
+
+    char copy[32];
+
+    strncpy(
+        copy,
+        summary,
+        sizeof(copy) - 1
+    );
+
+    copy[sizeof(copy) - 1] = '\0';
+
+
+    char* cursor =
+        copy;
+
+    while(
+        cursor != nullptr &&
+        *cursor != '\0'
+    )
+    {
+        char* comma =
+            strchr(
+                cursor,
+                ','
+            );
+
+        if(
+            comma != nullptr
+        )
+        {
+            *comma = '\0';
+        }
+
+        char* colon =
+            strchr(
+                cursor,
+                ':'
+            );
+
+        if(
+            colon != nullptr
+        )
+        {
+            *colon = '\0';
+
+            uint8_t entryNodeId =
+                (uint8_t) strtoul(
+                    cursor,
+                    nullptr,
+                    10
+                );
+
+            const char* entryValue =
+                colon + 1;
+
+            if(
+                entryNodeId != 0 &&
+                entryNodeId != (uint8_t) PERSISTENT_OS_NODE_ID
+            )
+            {
+                if(
+                    strncmp(
+                        entryValue,
+                        "NA",
+                        2
+                    ) != 0
+                )
+                {
+                    updateKnownNode(
+                        entryNodeId,
+                        strtof(
+                            entryValue,
+                            nullptr
+                        ),
+                        true
+                    );
+                }
+            }
+        }
+
+        cursor =
+            (comma != nullptr) ? (comma + 1) : nullptr;
+    }
+}
+
+
+//====================================================
+// Relevo de alarmas ajenas
+//====================================================
+
+bool CommunicationService::wasAlreadyRelayed(
+    uint8_t originNodeId,
+    uint8_t alarmType
+)
+{
+    uint32_t now =
+        millis();
+
+    for(
+        uint8_t i = 0;
+        i < MAX_RELAYED_ALARMS;
+        i++
+    )
+    {
+        if(
+            relayedAlarms[i].originNodeId == originNodeId &&
+            relayedAlarms[i].alarmType == alarmType
+        )
+        {
+            //--------------------------------------------------
+            // Se considera "la misma" alarma solo dentro de
+            // una ventana de tiempo; pasado ese lapso, una
+            // nueva ocurrencia del mismo tipo desde el mismo
+            // nodo sí se vuelve a relevar.
+            //--------------------------------------------------
+
+            if(
+                now - relayedAlarms[i].timestamp < 60000
+            )
+            {
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    return false;
+}
+
+
+void CommunicationService::rememberRelayed(
+    uint8_t originNodeId,
+    uint8_t alarmType
+)
+{
+    for(
+        uint8_t i = 0;
+        i < MAX_RELAYED_ALARMS;
+        i++
+    )
+    {
+        if(
+            relayedAlarms[i].originNodeId == originNodeId &&
+            relayedAlarms[i].alarmType == alarmType
+        )
+        {
+            relayedAlarms[i].timestamp = millis();
+
+            return;
+        }
+    }
+
+    for(
+        uint8_t i = 0;
+        i < MAX_RELAYED_ALARMS;
+        i++
+    )
+    {
+        if(
+            relayedAlarms[i].originNodeId == 0
+        )
+        {
+            relayedAlarms[i].originNodeId = originNodeId;
+            relayedAlarms[i].alarmType = alarmType;
+            relayedAlarms[i].timestamp = millis();
+
+            return;
+        }
+    }
+
+    //--------------------------------------------------
+    // Tabla llena: se sobrescribe el slot más antiguo en
+    // vez de descartar el registro nuevo.
+    //--------------------------------------------------
+
+    uint8_t oldestIndex = 0;
+
+    for(
+        uint8_t i = 1;
+        i < MAX_RELAYED_ALARMS;
+        i++
+    )
+    {
+        if(
+            relayedAlarms[i].timestamp < relayedAlarms[oldestIndex].timestamp
+        )
+        {
+            oldestIndex = i;
+        }
+    }
+
+    relayedAlarms[oldestIndex].originNodeId = originNodeId;
+    relayedAlarms[oldestIndex].alarmType = alarmType;
+    relayedAlarms[oldestIndex].timestamp = millis();
 }

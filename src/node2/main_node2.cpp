@@ -1,5 +1,25 @@
 /*
 ======================================================
+[DEPRECADO] PersistentOS2 - firmware mínimo original
+
+Este archivo YA NO SE COMPILA (platformio.ini excluye
+node2/ de todos los entornos). PersistentOS2 ahora usa
+el mismo src/main.cpp que PersistentOS1 -- mismo
+micro-núcleo (BootManager, FRAM, SensorService,
+CommunicationService, EnergyManager, AlarmManager),
+parametrizado por -DPERSISTENT_OS_NODE_ID=2, con rol
+esclavo hacia su primary (ver Config.h:
+BLUETOOTH_PRIMARY_IS_MASTER).
+
+Se conserva este archivo solo como referencia histórica
+del primer prototipo (firmware standalone, sin FRAM ni
+checkpoints), previo a que PersistentOS2 tuviera su
+propio módulo FRAM conectado.
+======================================================
+*/
+
+/*
+======================================================
 PersistentOS2 - Nodo emisor/receptor
 
 Este firmware es intencionalmente independiente del
@@ -118,12 +138,161 @@ void rememberProcessed(
 
 
 //--------------------------------------------------
+// Energía local (simulación en software, no
+// persistente): igual que en PersistentOS1, esto es
+// independiente del interruptor físico del tercer
+// equipo. Le permite a este nodo reportar un valor de
+// energía real (no un placeholder fijo) al nodo remoto.
+//--------------------------------------------------
+
+float localEnergy = 100.0f;
+
+uint32_t lastEnergySimTime = 0;
+
+
+void updateLocalEnergy()
+{
+    uint32_t now =
+        millis();
+
+    if(
+        now - lastEnergySimTime < NODE2_ENERGY_SIM_INTERVAL_MS
+    )
+    {
+        return;
+    }
+
+    lastEnergySimTime =
+        now;
+
+    //--------------------------------------------------
+    // Consumo constante con recuperación intermitente
+    // (aprox. 1 de cada 3 ciclos), para que la energía
+    // local de este nodo también fluctúe con el tiempo,
+    // en vez de decaer monótonamente.
+    //--------------------------------------------------
+
+    if(
+        (now / NODE2_ENERGY_SIM_INTERVAL_MS) % 3 == 0
+    )
+    {
+        localEnergy +=
+            NODE2_ENERGY_RECOVERY_AMOUNT;
+    }
+    else
+    {
+        localEnergy -=
+            NODE2_ENERGY_CONSUMPTION_PER_CYCLE;
+    }
+
+    if(
+        localEnergy > 100.0f
+    )
+    {
+        localEnergy = 100.0f;
+    }
+
+    if(
+        localEnergy < 0.0f
+    )
+    {
+        localEnergy = 0.0f;
+    }
+}
+
+
+//--------------------------------------------------
+// Última energía remota conocida (de PersistentOS1) y
+// su tendencia. Este nodo tampoco conoce el
+// comportamiento real de la fuente de alimentación de
+// ninguno de los dos: solo lo observado en cada DATA
+// recibido.
+//--------------------------------------------------
+
+bool hasRemoteEnergy = false;
+
+float remoteEnergyValue = 0.0f;
+
+float remoteEnergyTrend = 0.0f;
+
+
+void observeRemoteEnergy(
+    float value
+)
+{
+    if(
+        hasRemoteEnergy
+    )
+    {
+        remoteEnergyTrend =
+            value - remoteEnergyValue;
+    }
+
+    remoteEnergyValue =
+        value;
+
+    hasRemoteEnergy =
+        true;
+}
+
+
+//--------------------------------------------------
+// Ventana de comunicación favorable: heurístico
+// probabilístico de primera aproximación (Config.h),
+// igual criterio que usa PersistentOS1.
+//--------------------------------------------------
+
+bool isCommunicationWindowFavorable()
+{
+    bool localLow =
+        localEnergy < COMM_MIN_FAVORABLE_ENERGY;
+
+    if(
+        localLow
+    )
+    {
+        Serial.println(
+            "[BT] Window unfavorable: local energy low"
+        );
+
+        return false;
+    }
+
+    if(
+        !hasRemoteEnergy
+    )
+    {
+        return true;
+    }
+
+    bool remoteLow =
+        remoteEnergyValue < COMM_MIN_FAVORABLE_ENERGY;
+
+    bool remoteFalling =
+        remoteEnergyTrend < -COMM_TREND_FALLING_THRESHOLD;
+
+    if(
+        remoteLow &&
+        remoteFalling
+    )
+    {
+        Serial.println(
+            "[BT] Window unfavorable: last known remote energy low and falling"
+        );
+
+        return false;
+    }
+
+    return true;
+}
+
+
+//--------------------------------------------------
 // Envío propio (PersistentOS2 -> PersistentOS1).
 //
-// Genera y envía periódicamente su propio DATA, y
-// reintenta el mismo paquete si no llega ACK a tiempo.
-// El payload es un placeholder hasta que este nodo
-// tenga su propio sensor/monitor de energía.
+// Genera y envía periódicamente su propio DATA (con la
+// energía local real, no un placeholder), y reintenta
+// el mismo paquete si no llega ACK a tiempo.
 //--------------------------------------------------
 
 enum class OutgoingState : uint8_t
@@ -143,20 +312,13 @@ uint32_t ackWaitStart = 0;
 
 void sendOutgoingData()
 {
-    //--------------------------------------------------
-    // TODO: sustituir por una lectura real de energía
-    // cuando este nodo tenga su propio hardware de
-    // monitoreo (PowerMonitor equivalente al de
-    // PersistentOS1).
-    //--------------------------------------------------
-
     char payload[32];
 
     snprintf(
         payload,
         sizeof(payload),
-        "ENERGY_TEST: %lu",
-        (unsigned long) millis()
+        "ENERGY:%.2f",
+        localEnergy
     );
 
 
@@ -273,7 +435,8 @@ void pumpOutgoing()
     )
     {
         if(
-            now - lastSendTime >= NODE2_SEND_INTERVAL_MS
+            now - lastSendTime >= NODE2_SEND_INTERVAL_MS &&
+            isCommunicationWindowFavorable()
         )
         {
             sendOutgoingData();
@@ -345,11 +508,14 @@ void sendAck(
 
 //--------------------------------------------------
 // Forward declaration: definida más abajo, procesa
-// el cuerpo de un mensaje DATA|<packetID>|<payload>.
+// el cuerpo de un mensaje DATA|<packetID>|<payload> o
+// ALARM|<packetID>|<payload>.
 //--------------------------------------------------
 
 void handleIncomingDataLine(
-    char* line
+    char* line,
+
+    bool isAlarm
 );
 
 
@@ -380,7 +546,30 @@ void handleLine(
     )
     {
         handleIncomingDataLine(
-            line
+            line,
+            false
+        );
+
+        return;
+    }
+
+
+    //--------------------------------------------------
+    // ALARM|<packetID>|<payload> -> alerta de prioridad de
+    // PersistentOS1 (mismo protocolo, mismo ACK).
+    //--------------------------------------------------
+
+    if(
+        strncmp(
+            line,
+            "ALARM|",
+            6
+        ) == 0
+    )
+    {
+        handleIncomingDataLine(
+            line,
+            true
         );
 
         return;
@@ -422,11 +611,14 @@ void handleLine(
 
 
 void handleIncomingDataLine(
-    char* line
+    char* line,
+
+    bool isAlarm
 )
 {
     char* idStart =
-        line + 5;
+        line +
+        (isAlarm ? 6 : 5);
 
     char* separator =
         strchr(
@@ -439,7 +631,7 @@ void handleIncomingDataLine(
     )
     {
         Serial.println(
-            "[BT] Malformed DATA message (missing payload separator)"
+            "[BT] Malformed message (missing payload separator)"
         );
 
         return;
@@ -474,6 +666,36 @@ void handleIncomingDataLine(
         Serial.println(
             "[BT] Duplicate packet - re-sending ACK without reprocessing"
         );
+
+        sendAck(
+            packetId
+        );
+
+        return;
+    }
+
+
+    if(
+        isAlarm
+    )
+    {
+        Serial.println();
+
+        Serial.println(
+            "[ALARM RX] ==============================="
+        );
+
+        Serial.print(
+            "[ALARM RX] PersistentOS1 reports: "
+        );
+
+        Serial.println(
+            payload
+        );
+
+        Serial.println(
+            "[ALARM RX] ==============================="
+        );
     }
     else
     {
@@ -484,11 +706,37 @@ void handleIncomingDataLine(
         Serial.println(
             payload
         );
+    }
 
-        rememberProcessed(
-            packetId
+
+    //--------------------------------------------------
+    // Extraer ENERGY:<valor> del payload remoto (si
+    // viene) para conocer la última energía observada
+    // de PersistentOS1, insumo de isCommunicationWindowFavorable().
+    //--------------------------------------------------
+
+    const char* energyTag =
+        strstr(
+            payload,
+            "ENERGY:"
+        );
+
+    if(
+        energyTag != nullptr
+    )
+    {
+        observeRemoteEnergy(
+            strtof(
+                energyTag + 7,
+                nullptr
+            )
         );
     }
+
+
+    rememberProcessed(
+        packetId
+    );
 
 
     sendAck(
@@ -653,6 +901,8 @@ void setup()
 void loop()
 {
     pumpIncomingBytes();
+
+    updateLocalEnergy();
 
     pumpOutgoing();
 
